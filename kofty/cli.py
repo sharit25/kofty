@@ -6,7 +6,9 @@ Usage:
 """
 
 import argparse
+import importlib.resources
 import os
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -57,11 +59,63 @@ def build_cpp(source: str, out_cpp: Path) -> bool:
     return True
 
 
-def compile_cpp(cpp_file: Path, exe_file: Path) -> bool:
+def resolve_icon(icon_arg, source_file: Path):
+    """Batch 10d: which .ico to embed, if any.
+
+    Returns a Path to the icon, or None to skip icon embedding.
+    """
+    if icon_arg == "none":
+        return None
+    if icon_arg:
+        p = Path(icon_arg)
+        if not p.is_file():
+            print(f"[Kofty] Warning: --icon file not found: {p}",
+                  file=sys.stderr)
+            return None
+        return p
+
+    for c in (source_file.parent / "kofty.ico", Path.cwd() / "kofty.ico"):
+        if c.is_file():
+            return c
+
+    # Packaged icon.
+    try:
+        ref = importlib.resources.files("kofty").joinpath("data/kofty.ico")
+        with importlib.resources.as_file(ref) as p:
+            if p.is_file():
+                # Copy to build dir so the path stays valid.
+                return Path(str(p))
+    except Exception:
+        pass
+    return None
+
+
+def build_icon_object(icon: Path, build_dir: Path, stem: str):
+    """Batch 10d: compile `icon` into a Windows .o with windres."""
+    if shutil.which("windres") is None:
+        print("[Kofty] Warning: windres not on PATH; skipping icon embed.",
+              file=sys.stderr)
+        return None
+
+    rc_file = build_dir / f"{stem}_res.rc"
+    obj_file = build_dir / f"{stem}_res.o"
+
+    icon_abs = icon.resolve()
+    rc_file.write_text(f'IDI_ICON1 ICON "{icon_abs}"\n', encoding="utf-8")
+
+    cmd = ["windres", str(rc_file), "-O", "coff", "-o", str(obj_file)]
+    print(f"[Kofty] (icon) {' '.join(cmd)}")
+    result = subprocess.run(cmd, capture_output=True, text=True)
+    if result.returncode != 0:
+        print(f"[Kofty] windres failed:\n{result.stderr}", file=sys.stderr)
+        return None
+    return obj_file
+
+
+def compile_cpp(cpp_file: Path, exe_file: Path, icon=None) -> bool:
     """Invoke g++ to produce an executable.
 
-    Links raylib only if the emitted C++ actually includes raylib.h.
-    Pure-console programs link just libstdc++.
+    Batch 10d: if `icon` is a Path to a .ico, embeds it via windres.
     """
     cpp_text = cpp_file.read_text(encoding="utf-8")
     uses_raylib = "raylib.h" in cpp_text
@@ -71,6 +125,12 @@ def compile_cpp(cpp_file: Path, exe_file: Path) -> bool:
         "-o", str(exe_file),
         "-std=c++17",
     ]
+
+    if icon is not None:
+        obj = build_icon_object(icon, exe_file.parent, exe_file.stem)
+        if obj is not None:
+            cmd.append(str(obj))
+
     if uses_raylib:
         cmd += [
             f"-I{RAYLIB_INCLUDE}",
@@ -92,6 +152,9 @@ def main(argv=None) -> int:
                         help="Write C++ but do not compile or run.")
     parser.add_argument("--out", default="build",
                         help="Output directory (default: build)")
+    parser.add_argument("--icon", default=None,
+                        help="Embed an .ico in the compiled .exe. "
+                             "Use --icon=none to disable.")
     parser.add_argument("--version", action="store_true",
                         help="Show version and banner, then exit.")
     args = parser.parse_args(argv)
@@ -133,7 +196,10 @@ def main(argv=None) -> int:
     if args.emit_only:
         return 0
 
-    if not compile_cpp(cpp_file, exe_file):
+    # Batch 10d: resolve the icon (may be None).
+    _icon = resolve_icon(args.icon, src_path)
+
+    if not compile_cpp(cpp_file, exe_file, icon=_icon):
         print("[Kofty] Build failed.", file=sys.stderr)
         return 1
 

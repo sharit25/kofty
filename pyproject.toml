@@ -40,4 +40,4 @@ kofty = "kofty.cli:main"
 packages = ["kofty"]
 
 [tool.setuptools.package-data]
-kofty = ["*.pyi"]
+kofty = ["*.pyi", "data/*"]
