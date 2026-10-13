@@ -72,6 +72,8 @@ Entry point: interscript.bat -> python -m interscript.cli <file>
 
 - 465 runtime tests + 279 transpile-only tests = 744 total
 - 6 xfailed
+- Batch 10d (embed .ico in .exe) DONE
+- Batch 9c (packaging, rename to Kofty, GitHub push) DONE
 - Batch 10b (xs.pop bounds checking) DONE
 - Batch 10c (title/capitalize/isalpha/isdigit) DONE
 - Batch 10a (print(container) reprs) DONE
@@ -105,6 +107,9 @@ Entry point: interscript.bat -> python -m interscript.cli <file>
 - raylib-optional: only `import raylib` triggers raylib; console has none
 - Plan A COMPLETE (None/optional, Lists, Dicts, Sets, Tuples)
 - Last backup: InterScript-Language_backup_20261013_batch10b_pop_bounds.zip
+- Last backup: InterScript-Language_backup_20261013_batch10b_pop_bounds.zip
+- GitHub: https://github.com/sharit25/kofty
+- PyPI name reserved: kofty (not yet published)
 
 ## 4. What works
 
@@ -344,6 +349,10 @@ Batch 10a: print(container) reprs  DONE (2026-10-13)
 Batch 10b: xs.pop bounds checking  DONE (2026-10-13)
 Batch 10c: title/capitalize/isalpha/isdigit  DONE (2026-10-13)
 Batch 9c: pip install -e ., real CLI, docs  <- NEXT
+Batch 9c: packaging + rename InterScript→Kofty + GitHub push  DONE (2026-10-13)
+Batch 10d: embed .ico in compiled .exe  DONE (2026-10-13)
+Batch 11: publish to PyPI  <- NEXT (candidate)
+Batch 11-alt: GitHub Actions CI  <- NEXT (candidate)
 
 ## 7. Development workflow
 
@@ -904,3 +913,56 @@ Pre-rename source tree preserved in `.bak-rename/` (gitignored).
 - The pre-existing `fix_cli_branding_v2.py` bug (missed the argparse
   help string) was patched with a one-off command; the current
   `kofty/cli.py` is correct.
+
+## 28. Batch 10d changelog (2026-10-13)
+
+### Embed .ico in compiled executables
+
+Every `kofty foo.kfy` now embeds `kofty.ico` into the compiled
+`.exe`, so Windows Explorer / taskbar / Alt+Tab show the Kofty
+icon instead of the default blank icon.
+
+**How it works:**
+
+1. `resolve_icon()` looks for `kofty.ico` in this order:
+   - `--icon=<path>` (explicit)
+   - `<source_dir>/kofty.ico`
+   - `<cwd>/kofty.ico`
+   - the installed package: `kofty/data/kofty.ico`
+
+2. If found and `windres` is on PATH:
+   - writes `build/<stem>_res.rc` with `IDI_ICON1 ICON "<abs path>"`
+   - runs `windres <rc> -O coff -o <obj>`
+   - adds `<obj>` to the g++ link line
+
+3. `--icon=none` disables embedding.
+4. If any step fails (missing `windres`, bad icon path), a warning is
+   printed and the build continues without the icon.
+
+**Files changed:**
+
+- `kofty/cli.py` — new helpers `resolve_icon`, `build_icon_object`;
+  `compile_cpp` gains an `icon` parameter; argparse gets `--icon`.
+- `pyproject.toml` — `package-data` now includes `data/*`.
+- `kofty/data/kofty.ico`, `kofty/data/kofty.svg`,
+  `kofty/data/kofty_mono.svg` — packaged assets.
+
+**Verified:**
+
+- `kofty examples\console_hello.kfy` succeeds end-to-end, including
+  exe launch (WDAC was not blocking at that moment).
+- The `[Kofty] (icon) windres ...` line appears before the g++
+  invocation, and the compiled `.exe` shows the icon in Explorer.
+
+**Known follow-ups:**
+- Only the default `kofty.ico` is embedded; per-project custom icons
+  work via `--icon=<path>` but there's no per-project `.kofty.toml`
+  config yet.
+- On non-Windows systems, `windres` is not on PATH, so the icon is
+  silently skipped. Could add a Linux/macOS .ico embed path later
+  (uncommon; Linux binaries rarely have embedded icons).
+- If a future version bundles the icon into a wheel, `pip install
+  kofty` will ship it; currently works via editable install only.
+
+**Artifacts:** `patch_10d_icon.py` applied 4 anchors, backed up to
+`kofty/cli.py.bak.batch10d`, both deleted after close-out.
