@@ -1,0 +1,208 @@
+# vscode_demo.kfy
+# Exercises: strings, lists, dicts, sets, tuples, classes,
+#            f-strings, format specs, math/random/time, match/case,
+#            try/except, properties, classmethods, __str__/__eq__/__add__
+#
+# NOTE: two `for` loops over inline list-of-class literals are
+# expanded by hand. Both hit known gaps:
+#   - `for` over an inline literal list (Batch 10f.2)
+#   - list literal with non-literal elements (Batch 10f.1)
+# See section 5 of HANDOFF.md.
+
+import math
+import random
+
+class Point:
+    def __init__(self, x: int, y: int):
+        self.x = x
+        self.y = y
+
+    def __str__(self):
+        return f"Point({self.x}, {self.y})"
+
+    def __eq__(self, other):
+        return self.x == other.x and self.y == other.y
+
+    def __add__(self, other):
+        return Point(self.x + other.x, self.y + other.y)
+
+    @property
+    def magnitude_sq(self):
+        return self.x * self.x + self.y * self.y
+
+    @classmethod
+    def origin(cls):
+        return Point(0, 0)
+
+
+class Circle:
+    def __init__(self, center: Point, radius: float):
+        self.center = center
+        self.radius = radius
+
+    @property
+    def area(self):
+        return math.pi * self.radius * self.radius
+
+    @property
+    def diameter(self):
+        return self.radius * 2.0
+
+    @diameter.setter
+    def diameter(self, d: float):
+        self.radius = d / 2.0
+
+    def __str__(self):
+        return f"Circle(center={self.center}, r={self.radius:.2f})"
+
+
+def banner(title: str):
+    print("=" * 40)
+    print(title)
+    print("=" * 40)
+
+
+def describe_point(p: Point):
+    match p.x:
+        case 0:
+            print(f"  {p} is on the y-axis")
+        case _:
+            print(f"  {p} is off-axis, |p|^2 = {p.magnitude_sq}")
+
+
+banner("1. Strings and f-strings")
+
+name = "kofty"
+print(f"Hello, {name}!")
+print(f"upper: {name.upper()}, title: {name.title()}")
+print(f"Padded: [{name:>10}]  [{name:<10}]  [{name:^10}]")
+pi = math.pi
+print(f"pi = {pi:.2f}")
+print(f"pi = {pi:.5f}")
+n = 42
+print(f"n = {n:05d}")
+big = 1234567
+print(f"big = {big:,}")
+print(f"hex = {255:x}, upper = {255:X}, oct = {255:o}, bin = {255:b}")
+
+
+banner("2. Lists, dicts, sets, tuples")
+
+xs = [3, 1, 4, 1, 5, 9, 2, 6]
+print(f"list: {xs}")
+xs.sort()
+print(f"sorted: {xs}")
+xs.append(10)
+print(f"after append: {xs}")
+top = xs.pop()
+print(f"popped: {top}, list now: {xs}")
+
+scores = {"alice": 90, "bob": 85, "carol": 95}
+print(f"dict: {scores}")
+for k, v in scores.items():
+    print(f"  {k}: {v}")
+
+uniq = {1, 2, 3, 3, 2, 1}
+print(f"set: {uniq}")
+print(f"union: {uniq | {3, 4, 5}}")
+print(f"intersection: {uniq & {2, 3, 4}}")
+
+pair = (10, 20)
+a, b = pair
+print(f"pair: {pair}  a={a}  b={b}")
+
+triple = (1, 2, 3)
+print(f"triple: {triple}  triple[1] = {triple[1]}")
+
+
+banner("3. math / random / time")
+
+print(f"sqrt(2) = {math.sqrt(2):.4f}")
+print(f"floor(2.7) = {math.floor(2.7)}")
+print(f"ceil(2.1) = {math.ceil(2.1)}")
+print(f"sin(0) = {math.sin(0):.4f}")
+print(f"e = {math.e:.4f}")
+
+random.seed(7)
+print(f"random.random() = {random.random():.4f}")
+print(f"random.randint(1, 100) = {random.randint(1, 100)}")
+deck = [1, 2, 3, 4, 5]
+random.shuffle(deck)
+print(f"shuffled deck: {deck}")
+print(f"random.choice(deck) = {random.choice(deck)}")
+
+
+banner("4. Classes, operators, properties")
+
+p1 = Point(3, 4)
+p2 = Point(1, 2)
+print(f"p1 = {p1}")
+print(f"p2 = {p2}")
+print(f"p1 == p2: {p1 == p2}")
+print(f"p1 == Point(3, 4): {p1 == Point(3, 4)}")
+print(f"p1 + p2 = {p1 + p2}")
+print(f"p1.magnitude_sq = {p1.magnitude_sq}")
+
+origin = Point.origin()
+print(f"Point.origin() = {origin}")
+
+c = Circle(Point(0, 0), 2.5)
+print(f"c = {c}")
+print(f"c.area = {c.area:.4f}")
+print(f"c.diameter = {c.diameter:.2f}")
+c.diameter = 10.0
+print(f"after c.diameter = 10.0, c.radius = {c.radius:.2f}")
+
+
+banner("5. match / case and try / except")
+
+# Expanded from:
+#   for p in [Point(0, 5), Point(3, 4), Point(0, 0)]:
+#       describe_point(p)
+# Blocked on Batch 10f (list literal with non-literal elements).
+describe_point(Point(0, 5))
+describe_point(Point(3, 4))
+describe_point(Point(0, 0))
+
+try:
+    xs2 = [1, 2, 3]
+    xs2.pop(100)
+    print("  should not reach here")
+except Exception:
+    print("  caught out-of-range pop")
+
+
+banner("6. Lambda, enumerate, zip, for-else")
+
+twice = lambda x: x * 2
+print(f"twice(21) = {twice(21)}")
+
+words = ["alpha", "beta", "gamma"]
+for i, w in enumerate(words):
+    print(f"  {i}: {w}")
+
+left = [1, 2, 3]
+right = ["a", "b", "c"]
+for n, s in zip(left, right):
+    print(f"  {n} -> {s}")
+
+# Expanded from:
+#   for n in [1, 3, 5, 7]:
+#       if n % 2 == 0:
+#           print("  found even")
+#           break
+#   else:
+#       print("  no evens found")
+# Blocked on Batch 10f (for over inline list literal).
+odds = [1, 3, 5, 7]
+found_even = False
+for n in odds:
+    if n % 2 == 0:
+        print("  found even")
+        found_even = True
+        break
+if not found_even:
+    print("  no evens found")
+
+
+banner("Done.")
