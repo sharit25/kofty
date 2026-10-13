@@ -440,20 +440,19 @@ class CppEmitter(ast.NodeVisitor):
                 if right_is_str and left_is_int_lit:
                     return f"str_repeat({right}, {left})"
 
-            # Set operations: |, &, -, ^ between two known set vars.
-            left_is_set = (isinstance(node.left, ast.Name)
-                           and node.left.id in self.set_vars)
-            right_is_set = (isinstance(node.right, ast.Name)
-                            and node.right.id in self.set_vars)
-            if left_is_set and right_is_set:
-                if isinstance(node.op, ast.BitOr):
-                    return f"set_op_union({left}, {right})"
-                if isinstance(node.op, ast.BitAnd):
-                    return f"set_op_intersection({left}, {right})"
-                if isinstance(node.op, ast.Sub):
-                    return f"set_op_difference({left}, {right})"
-                if isinstance(node.op, ast.BitXor):
-                    return f"set_op_symdiff({left}, {right})"
+            # Set operations: |, &, -, ^ between two known set vars or literals.
+            if isinstance(node.op, (ast.BitOr, ast.BitAnd, ast.Sub, ast.BitXor)):
+                if self._is_set_expr(node.left) and self._is_set_expr(node.right):
+                    left_s = self._emit_set_expr(node.left, left)
+                    right_s = self._emit_set_expr(node.right, right)
+                    if isinstance(node.op, ast.BitOr):
+                        return f"set_op_union({left_s}, {right_s})"
+                    if isinstance(node.op, ast.BitAnd):
+                        return f"set_op_intersection({left_s}, {right_s})"
+                    if isinstance(node.op, ast.Sub):
+                        return f"set_op_difference({left_s}, {right_s})"
+                    if isinstance(node.op, ast.BitXor):
+                        return f"set_op_symdiff({left_s}, {right_s})"
 
             # List concat: if both sides are known lists and op is +,
             # use vec_concat.
@@ -1178,6 +1177,24 @@ class CppEmitter(ast.NodeVisitor):
             return (self._is_string_expr(node.left)
                     or self._is_string_expr(node.right))
         return False
+
+    def _is_set_expr(self, node):
+        """True if `node` is a known set variable or a set literal."""
+        if isinstance(node, ast.Name):
+            return node.id in self.set_vars
+        if isinstance(node, ast.Set):
+            return True
+        return False
+
+    def _emit_set_expr(self, node, already_emitted):
+        """Emit a set expression: a Name as-is, or a literal wrapped in
+        std::set<int>{...}. Element type is inferred as int for this batch."""
+        if isinstance(node, ast.Name):
+            return already_emitted
+        if isinstance(node, ast.Set):
+            elems = ", ".join(self.expr(e) for e in node.elts)
+            return f"std::set<int>{{{elems}}}"
+        raise TranspileError(f"Unsupported set expression: {type(node).__name__}")
 
     def _as_std_string(self, node: ast.AST, cpp_expr: str) -> str:
         """Ensure the emitted C++ is a std::string.
