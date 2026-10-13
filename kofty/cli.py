@@ -16,6 +16,25 @@ from .transpiler import transpile, TranspileError
 
 VERSION = "0.1.0"
 
+# Banner for --version and --help.
+# Uses Unicode block characters that render in any modern terminal.
+_BANNER = r"""
+  K   K  OOO  FFFF TTTT Y   Y
+  K  K  O   O F      T   Y Y
+  KKK   O   O FFF    T    Y
+  K  K  O   O F      T    Y
+  K   K  OOO  F      T    Y
+"""
+
+
+
+def print_banner():
+    """Print the Kofty ASCII banner + version."""
+    print(_BANNER)
+    print(f"  Kofty v{VERSION} - Python subset -> C++ -> native binary")
+    print(f"  https://github.com/sharit25/kofty")
+    print()
+
 # Adjust these if your Raylib / MinGW lives elsewhere.
 RAYLIB_INCLUDE = os.environ.get("RAYLIB_INCLUDE", "C:/raylib/include")
 RAYLIB_LIB     = os.environ.get("RAYLIB_LIB",     "C:/raylib/lib")
@@ -73,9 +92,13 @@ def main(argv=None) -> int:
                         help="Write C++ but do not compile or run.")
     parser.add_argument("--out", default="build",
                         help="Output directory (default: build)")
-    parser.add_argument("--version", action="version",
-                        version=f"Kofty {VERSION}")
+    parser.add_argument("--version", action="store_true",
+                        help="Show version and banner, then exit.")
     args = parser.parse_args(argv)
+
+    if args.version:
+        print_banner()
+        return 0
 
     if not args.file:
         parser.print_help()

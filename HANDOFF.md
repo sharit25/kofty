@@ -864,3 +864,43 @@ in its loop) — the grep for `i >= ` matched a false positive from
 
 **Artifacts:** `impl_batch10b.py` applied anchor A. Backup zip:
 `InterScript-Language_backup_20261013_batch10b_pop_bounds.zip`.
+
+## 27. Rename to Kofty + packaging (2026-10-13)
+
+**Project renamed InterScript -> Kofty.**
+
+- Python package: `interscript` -> `kofty`
+- CLI command: `interscript` -> `kofty`
+- File extension: `.is` -> `.kfy`
+- PyPI package name: `kofty` (verified available)
+- GitHub repo: https://github.com/sharit25/kofty
+
+Done via `rename_to_kofty.py` (kept in the repo for reference).
+Pre-rename source tree preserved in `.bak-rename/` (gitignored).
+
+**Packaging added (Batch 9c):**
+
+- `pyproject.toml` — PEP 621 metadata, MIT license,
+  `kofty = "kofty.cli:main"` entry point.
+- `LICENSE` — MIT, copyright 2026 sharit25.
+- `.gitignore` — build, venv, caches, backups.
+- `README.md` — rewritten for Kofty, no Raylib references.
+
+**Verified:**
+
+- `pip install -e .` succeeds in a fresh venv.
+- `kofty --help` shows the correct CLI usage.
+- `kofty examples\console_hello.kfy --emit-only` writes the C++
+  with `[Kofty] Wrote build\console_hello.cpp` status.
+- 451 transpile-only tests pass (0 flake).
+- Git commit `bc54fbb` (initial) and `7b9fd2a` (README fix) pushed
+  to GitHub `main`.
+
+**Notes:**
+- The project folder is still `C:\InterScript-Language\`. Renaming
+  the folder is cosmetic and optional; deferred.
+- `HANDOFF.md` intentionally kept "InterScript-Language" references
+  as historical artifacts.
+- The pre-existing `fix_cli_branding_v2.py` bug (missed the argparse
+  help string) was patched with a one-off command; the current
+  `kofty/cli.py` is correct.
