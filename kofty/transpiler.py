@@ -346,12 +346,22 @@ class CppEmitter(ast.NodeVisitor):
                     inner_cpp = self.expr(v.value)
                     # Batch 9a: parse format_spec if present.
                     _spec = self._parse_format_spec(v.format_spec)
+
                     if _spec is None:
-                        parts.append(f"is_to_string({inner_cpp})")
+                        # Batch 10i: if the inner expression is a user-class
+                        # instance, dispatch to its __str__() method instead of
+                        # calling is_to_string (which has no overload for user
+                        # classes).
+                        _cls = self._class_of_expr(v.value)
+                        if _cls is not None and _cls in self.str_classes:
+                            parts.append(f"{inner_cpp}.__str__()")
+                        else:
+                            parts.append(f"is_to_string({inner_cpp})")
                     else:
                         parts.append(
-                            self._emit_format_spec(inner_cpp, _spec)
-                        )
+                        self._emit_format_spec(inner_cpp, _spec)
+                    )
+
                 else:
                     raise TranspileError(
                         f"Unsupported f-string part: {v!r}"
@@ -1089,7 +1099,16 @@ class CppEmitter(ast.NodeVisitor):
                 "str": "std::string",
                 "bool": "bool",
             }
-            return mapping.get(annotation.id, "int")
+
+            if annotation.id in mapping:
+                return mapping[annotation.id]
+            # Batch 10j: user-class annotation (e.g. `p: Point`).
+            # Emit the class name directly.
+            if annotation.id in self.user_classes:
+                return annotation.id
+            # Unknown annotation -> fall back to int (unchanged
+            # behavior for anything the transpiler doesn't know).
+            return "int"
         return "int"
 
     def _infer_default_type(self, node: ast.AST) -> str:
