@@ -420,6 +420,26 @@ class CppEmitter(ast.NodeVisitor):
             if isinstance(node.op, ast.FloorDiv):
                 return f"is_floordiv({left}, {right})"
 
+            # String repetition: str * int  or  int * str.
+            # Python: "=" * 40 -> 40 equals signs.
+            if isinstance(node.op, ast.Mult):
+                left_is_str = self._is_string_expr(node.left)
+                right_is_str = self._is_string_expr(node.right)
+                left_is_int_lit = (
+                    isinstance(node.left, ast.Constant)
+                    and isinstance(node.left.value, int)
+                    and not isinstance(node.left.value, bool)
+                )
+                right_is_int_lit = (
+                    isinstance(node.right, ast.Constant)
+                    and isinstance(node.right.value, int)
+                    and not isinstance(node.right.value, bool)
+                )
+                if left_is_str and right_is_int_lit:
+                    return f"str_repeat({left}, {right})"
+                if right_is_str and left_is_int_lit:
+                    return f"str_repeat({right}, {left})"
+
             # Set operations: |, &, -, ^ between two known set vars.
             left_is_set = (isinstance(node.left, ast.Name)
                            and node.left.id in self.set_vars)
@@ -3419,6 +3439,16 @@ def transpile(source: str) -> str:
     # Pass 1: register user function names and class names so calls resolve.
     # Pass 1: register user function names, class names, and inheritance info.
     emitter = CppEmitter()
+        # Pass 1.5: register all top-level imports BEFORE emitting any
+    # class or function bodies. visit_Import only sets
+    # emitter.imported_modules; the flag is read by expr()/_call_expr
+    # for gating `math.X`, `random.X`, `time.X`. Previously this ran
+    # in Pass 3, so `math.pi` inside a class body raised
+    # "math.pi used without `import math`" (Batch 10e regression fix).
+    # Hoisting matches Python semantics: imports are module-scoped.
+    for node in tree.body:
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            emitter.visit(node)
     for node in tree.body:
         if isinstance(node, ast.FunctionDef):
             emitter.user_funcs.add(node.name)
@@ -3839,6 +3869,16 @@ def transpile(source: str) -> str:
         "    return {v.first * s, v.second * s};",
         "}",
         "",
+        "// String repetition: s * n and n * s.",
+        "// Emitted by Kofty for `\"=\" * 40`, `\"ab\" * 3`, etc.",
+        "static std::string str_repeat(const std::string& s, int n) {",
+        "    if (n <= 0) return \"\";",
+        "    std::string out;",
+        "    out.reserve(s.size() * (size_t)n);",
+        "    for (int i = 0; i < n; ++i) out += s;",
+        "    return out;",
+        "}",
+        "",
         "// Vector concatenation: a + b for std::vector<T>.",
         "template <typename T>",
         "std::vector<T> vec_concat(const std::vector<T>& a, const std::vector<T>& b) {",
@@ -3996,6 +4036,19 @@ def transpile(source: str) -> str:
         "std::string repr_tuple(const std::tuple<Ts...>& t) {",
         "    return repr_tuple_impl(t, std::index_sequence_for<Ts...>{});",
         "}",
+        "// Batch 10h: is_to_string overloads for containers, so that",
+        "// f-strings and str() work on lists, dicts, sets, pairs, tuples.",
+        "// These must appear after the repr_* definitions above.",
+        "template <typename T>",
+        "std::string is_to_string(const std::vector<T>& v) { return repr_vector(v); }",
+        "template <typename K, typename V>",
+        "std::string is_to_string(const std::map<K, V>& m) { return repr_map(m); }",
+        "template <typename T>",
+        "std::string is_to_string(const std::set<T>& s) { return repr_set(s); }",
+        "template <typename T1, typename T2>",
+        "std::string is_to_string(const std::pair<T1, T2>& p) { return repr_pair(p); }",
+        "template <typename... Ts>",
+        "std::string is_to_string(const std::tuple<Ts...>& t) { return repr_tuple(t); }",
         "",
         "// ---- Batch 10c: title / capitalize / isalpha / isdigit ----",
         "static std::string str_title(std::string s) {",

@@ -966,3 +966,58 @@ icon instead of the default blank icon.
 
 **Artifacts:** `patch_10d_icon.py` applied 4 anchors, backed up to
 `kofty/cli.py.bak.batch10d`, both deleted after close-out.
+
+## 30. Batch 10f changelog (2026-10-13)
+
+### String repetition: `s * n` and `n * s`
+
+**Bug.** `"=" * 40` emitted raw C++ `("=" * 40)`, which is
+`const char[2] * int` — invalid. No test caught it because no
+existing test or example used string repetition.
+
+**Fix — two anchors in `kofty/transpiler.py`:**
+
+1. Preamble — added after `vec2_scale`:
+
+    static std::string str_repeat(const std::string& s, int n) {
+        if (n <= 0) return "";
+        std::string out;
+        out.reserve(s.size() * (size_t)n);
+        for (int i = 0; i < n; ++i) out += s;
+        return out;
+    }
+
+2. `expr()` `ast.BinOp` — new branch after the Pow/FloorDiv block:
+
+    if isinstance(node.op, ast.Mult):
+        left_is_str = self._is_string_expr(node.left)
+        right_is_str = self._is_string_expr(node.right)
+        left_is_int_lit = (isinstance(node.left, ast.Constant)
+                           and isinstance(node.left.value, int)
+                           and not isinstance(node.left.value, bool))
+        right_is_int_lit = (isinstance(node.right, ast.Constant)
+                            and isinstance(node.right.value, int)
+                            and not isinstance(node.right.value, bool))
+        if left_is_str and right_is_int_lit:
+            return f"str_repeat({left}, {right})"
+        if right_is_str and left_is_int_lit:
+            return f"str_repeat({right}, {left})"
+
+**Scope.** int side must be a literal constant for this batch.
+`"=" * n` where `n` is a variable is a future extension.
+
+**Tests:** `tests/test_batch10f_transpile.py`, 4 tests.
+
+**Verified:**
+- 4/4 batch-10f tests pass
+- 462/462 existing transpile-only tests still pass
+- check.py clean (56 Python files)
+- Demo advances past the two `"=" * 40` g++ errors
+
+**Artifacts:** backup
+`InterScript-Language_backup_20261013_batch10f_str_repeat.zip`.
+
+**Follow-up.** Test authoring note: when asserting a helper is
+"not used", scope the assertion to `main()` — the preamble
+always contains every helper, so `assert "str_repeat" not in out`
+is wrong; `assert "str_repeat(" not in main_body` is right.
