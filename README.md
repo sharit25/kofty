@@ -1,5 +1,8 @@
 Set-Location C:\InterScript-Language
 $readme = @'
+<p align="center">
+  <img src="kofty.svg" alt="Kofty" width="128">
+</p>
 # Kofty
 
 A Python-subset language that transpiles to C++ and compiles to a
