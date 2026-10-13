@@ -1,0 +1,26 @@
+# pyright: reportUndefinedVariable=false
+#
+# none_demo.kfy — demonstrates the None value.
+
+def find_positive(xs):
+    for x in xs:
+        if x > 0:
+            return x
+    return None
+
+nums = [-1, -2, -3]
+result = find_positive(nums)
+if result is None:
+    print("no positive number found")
+else:
+    print("found: " + str(result))
+
+nums2 = [-1, 5, -3]
+result2 = find_positive(nums2)
+if result2 is not None:
+    print("found: " + str(result2))
+
+# Direct None assignment
+placeholder = None
+if placeholder is None:
+    print("placeholder is empty")

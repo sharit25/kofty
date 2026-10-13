@@ -1,0 +1,28 @@
+# pyright: reportUndefinedVariable=false
+
+class Animal:
+    kingdom = "Animalia"
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def describe(self):
+        print("I am " + self.name)
+
+
+class Dog(Animal):
+    def __init__(self, name: str, breed: str):
+        super().__init__(name)
+        self.breed = breed
+
+    def describe(self):
+        super().describe()
+        print("I am also a " + self.breed)
+
+
+a = Animal("Generic")
+d = Dog("Rex", "Labrador")
+
+a.describe()
+d.describe()
+print("Kingdom: " + Animal.kingdom)

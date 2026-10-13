@@ -1,0 +1,15 @@
+x = 3.14159
+print(f"{x:.2f}")
+print(f"{x:.0f}")
+
+n = 255
+print(f"hex: {n:x}")
+print(f"HEX: {n:X}")
+print(f"oct: {n:o}")
+print(f"bin: {n:b}")
+
+big = 1234567
+print(f"total: {big:,}")
+
+s = "hello world"
+print(f"{s:.5s}")

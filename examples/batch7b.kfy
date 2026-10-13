@@ -1,0 +1,37 @@
+# Batch 7b: import random.
+
+import random
+
+random.seed(42)
+
+print(random.randint(1, 100))
+print(random.randint(1, 100))
+print(random.randint(1, 100))
+
+print("---")
+
+random.seed(42)
+x = random.random()
+print("got a float")
+y = random.random()
+print("got another float")
+
+print("---")
+
+fruits = ["apple", "banana", "cherry"]
+for i in range(5):
+    print(random.choice(fruits))
+
+print("---")
+
+nums = [1, 2, 3, 4, 5]
+random.shuffle(nums)
+for n in nums:
+    print(n)
+
+print("---")
+
+random.seed(100)
+print(random.randint(1, 1000))
+random.seed(100)
+print(random.randint(1, 1000))

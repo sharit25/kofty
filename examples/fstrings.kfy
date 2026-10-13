@@ -1,0 +1,21 @@
+# Batch 2b: f-strings and .format().
+
+name = "world"
+print(f"Hello, {name}!")
+
+a = 3
+b = 5
+print(f"{a} + {b} = {a + b}")
+
+x = 42
+print(f"x={x}")
+
+pi = 3.14
+print(f"pi is {pi}")
+
+s = f"{{literal braces}}"
+print(s)
+
+print("{} and {}".format("cats", "dogs"))
+print("{0} + {1} = {2}".format(2, 3, 5))
+print("{0}-{1}-{0}".format("a", "b"))

@@ -1,0 +1,42 @@
+# Batch 4b: for...else.
+
+xs = [1, 2, 3]
+for x in xs:
+    print(x)
+else:
+    print("no break -- else ran")
+
+print("---")
+
+for x in xs:
+    if x == 2:
+        break
+    print(x)
+else:
+    print("this won't print")
+
+print("---")
+
+for i in range(3):
+    print(i)
+else:
+    print("range done")
+
+print("---")
+
+names = ["alice", "bob"]
+for i, n in enumerate(names):
+    if n == "bob":
+        break
+    print(i)
+    print(n)
+else:
+    print("else -- all checked")
+
+print("---")
+
+for x in xs:
+    if x > 10:
+        break
+else:
+    print("else ran -- no x exceeded 10")

@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "kofty"
+version = "0.1.0"
+description = "Kofty - a Python-subset language that transpiles to C++ for console programs"
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "MIT" }
+authors = [
+    { name = "sharit25", email = "elradbrax@gmail.com" }
+]
+keywords = ["language", "transpiler", "compiler", "python", "cpp", "console"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: C++",
+    "Topic :: Software Development :: Compilers",
+    "Topic :: Software Development :: Code Generators",
+    "Operating System :: OS Independent",
+]
+
+[project.urls]
+Homepage = "https://github.com/sharit25/kofty"
+Repository = "https://github.com/sharit25/kofty"
+Issues = "https://github.com/sharit25/kofty/issues"
+
+[project.scripts]
+kofty = "kofty.cli:main"
+
+[tool.setuptools]
+packages = ["kofty"]
+
+[tool.setuptools.package-data]
+kofty = ["*.pyi"]

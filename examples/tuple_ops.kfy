@@ -1,0 +1,26 @@
+# Plan A step 5: tuples (N >= 3) demonstration.
+
+# Literal + subscript
+t = (10, 20, 30)
+print(t[0])
+print(t[1])
+print(t[2])
+
+# Unpacking
+a, b, c = t
+print(a + b + c)
+
+# 4-element tuple
+four = (1, 2, 3, 4)
+print(four[3])
+
+# Mixed types
+mixed = (1, "two", 3.5)
+print(mixed[0])
+print(mixed[1])
+print(mixed[2])
+
+# 2-element tuples still work (as std::pair)
+pair = (100, 200)
+print(pair[0])
+print(pair[1])

@@ -1,0 +1,42 @@
+# pyright: reportUndefinedVariable=false
+#
+# list_ops.kfy — demonstrate the new list methods.
+
+nums = [3, 1, 4, 1, 5, 9, 2, 6]
+print("original: " + str(len(nums)) + " items")
+
+nums.sort()
+print("sorted length: " + str(len(nums)))
+
+nums.reverse()
+print("reversed length: " + str(len(nums)))
+
+nums.insert(0, 99)
+print("after insert: " + str(nums[0]))
+
+nums.remove(99)
+print("after remove: " + str(len(nums)))
+
+# Membership
+if 5 in nums:
+    print("contains 5")
+if 100 not in nums:
+    print("does not contain 100")
+
+# Negative indexing
+last = nums[-1]
+print("last element: " + str(last))
+
+# Slicing
+first_three = nums[0:3]
+print("first three count: " + str(len(first_three)))
+
+# Concat
+a = [1, 2]
+b = [3, 4]
+c = a + b
+print("concat length: " + str(len(c)))
+
+# Clear
+nums.clear()
+print("after clear: " + str(len(nums)))

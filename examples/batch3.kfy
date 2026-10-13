@@ -1,0 +1,16 @@
+# Batch 3: **, //, ternary.
+
+print(2 ** 3)
+print(1 + 2 ** 3)
+print((1 + 2) ** 3)
+
+print(7 // 2)
+print(-7 // 2)
+print(7 // -2)
+print(7.5 // 2.0)
+
+n = -5
+print(n if n > 0 else 0)
+
+x = 5
+print("pos" if x > 0 else ("zero" if x == 0 else "neg"))

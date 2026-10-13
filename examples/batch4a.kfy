@@ -1,0 +1,27 @@
+# Batch 4a: enumerate and zip.
+
+xs = [10, 20, 30]
+for i, x in enumerate(xs):
+    print(i)
+    print(x)
+
+print("---")
+
+names = ["alice", "bob"]
+for i, n in enumerate(names, 1):
+    print(i)
+    print(n)
+
+print("---")
+
+a = [1, 2, 3]
+b = [10, 20, 30]
+for x, y in zip(a, b):
+    print(x + y)
+
+print("---")
+
+small = [1, 2]
+big = [100, 200, 300]
+for x, y in zip(small, big):
+    print(x + y)

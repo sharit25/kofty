@@ -1,0 +1,28 @@
+# pyright: reportUndefinedVariable=false
+
+class Shape:
+    def __init__(self, name: str):
+        self.name = name
+
+    def describe(self) -> str:
+        return "I am a " + self.name
+
+    def area(self) -> float:
+        return 0.0
+
+
+class Circle(Shape):
+    def __init__(self, r: float):
+        super().__init__("circle")
+        self.r = r
+
+    def area(self) -> float:
+        return 3.14 * self.r * self.r
+
+
+s = Shape("shape")
+c = Circle(2.0)
+
+print(s.describe())
+print(c.describe())
+print("Area: " + str(c.area()))

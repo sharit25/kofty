@@ -1,0 +1,37 @@
+# pyright: reportUndefinedVariable=false
+
+class Shape:
+    def __init__(self, name: str):
+        self.name = name
+
+    @abstractmethod
+    def area(self) -> float:
+        pass
+
+
+class Circle(Shape):
+    def __init__(self, r: float):
+        super().__init__("circle")
+        self.r = r
+
+    def area(self) -> float:
+        return 3.14 * self.r * self.r
+
+
+class Square(Shape):
+    def __init__(self, s: float):
+        super().__init__("square")
+        self.s = s
+
+    def area(self) -> float:
+        return self.s * self.s
+
+
+shapes = []
+shapes.append(ptr(Circle(2.0)))
+shapes.append(ptr(Square(3.0)))
+shapes.append(ptr(Circle(1.0)))
+
+for i in range(len(shapes)):
+    s = shapes[i]
+    print(s.name + " area: " + str(s.area()))

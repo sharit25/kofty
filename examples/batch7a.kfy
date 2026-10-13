@@ -1,0 +1,43 @@
+# Batch 7a: import math.
+
+import math
+
+print(math.sqrt(16.0))
+print(math.sqrt(2.0))
+
+print("---")
+
+print(math.pow(2.0, 10.0))
+
+print("---")
+
+print(math.sin(0.0))
+print(math.cos(0.0))
+
+print("---")
+
+print(math.floor(3.7))
+print(math.ceil(3.2))
+print(math.fabs(-5.5))
+
+print("---")
+
+print(math.exp(0.0))
+print(math.log(1.0))
+
+print("---")
+
+print(math.pi)
+print(math.e)
+
+print("---")
+
+r = 5.0
+area = math.pi * r * r
+print(area)
+
+print("---")
+
+a = 3.0
+b = 4.0
+print(math.sqrt(a * a + b * b))

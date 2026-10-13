@@ -1,0 +1,15 @@
+xs = [1, 2, 3]
+print(xs)
+print([10, 20])
+
+d = {"a": 1, "b": 2}
+print(d)
+
+s = {1, 2, 3}
+print(s)
+
+t2 = (1, 2)
+print(t2)
+
+t3 = (10, 20, 30)
+print(t3)

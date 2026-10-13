@@ -1,0 +1,46 @@
+# pyright: reportUndefinedVariable=false
+
+class Shape:
+    count = 0
+
+    def __init__(self, name: str):
+        self.name = name
+
+    def describe(self) -> str:
+        return "A " + self.name
+
+    @abstractmethod
+    def area(self) -> float:
+        pass
+
+
+class Circle(Shape):
+    def __init__(self, r: float):
+        super().__init__("circle")
+        self.r = r
+
+    def area(self) -> float:
+        return 3.14 * self.r * self.r
+
+
+class Square(Shape):
+    def __init__(self, s: float):
+        super().__init__("square")
+        self.s = s
+
+    def area(self) -> float:
+        return self.s * self.s
+
+
+class Math:
+    @staticmethod
+    def twice(x: int) -> int:
+        return x * 2
+
+
+c = Circle(2.0)
+s = Square(3.0)
+
+print(c.describe() + " area: " + str(c.area()))
+print(s.describe() + " area: " + str(s.area()))
+print("twice(21) = " + str(Math.twice(21)))

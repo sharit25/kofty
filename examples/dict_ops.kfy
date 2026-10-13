@@ -1,0 +1,53 @@
+# pyright: reportUndefinedVariable=false
+#
+# dict_ops.kfy — demonstrate the new dict features.
+
+scores = {"alice": 100, "bob": 85, "carol": 92}
+print("count: " + str(len(scores)))
+
+# Iterate keys
+print("keys:")
+for k in scores:
+    print("  " + k)
+
+# Iterate values
+print("values:")
+for v in scores.values():
+    print("  " + str(v))
+
+# Iterate items
+print("items:")
+for k, v in scores.items():
+    print("  " + k + " = " + str(v))
+
+# get with default
+missing = scores.get("dave", 0)
+print("dave: " + str(missing))
+present = scores.get("alice", 0)
+print("alice: " + str(present))
+
+# Membership
+if "bob" in scores:
+    print("bob found")
+if "eve" not in scores:
+    print("eve missing")
+
+# Update
+extra = {"dave": 78, "eve": 88}
+scores.update(extra)
+print("after update: " + str(len(scores)))
+
+# Pop
+popped = scores.pop("bob")
+print("popped bob: " + str(popped))
+print("after pop: " + str(len(scores)))
+
+# Clear
+scores.clear()
+print("after clear: " + str(len(scores)))
+
+# Nested
+config = {"graphics": {"width": 800, "height": 600}}
+w = config["graphics"]["width"]
+print("nested width: " + str(w))
+

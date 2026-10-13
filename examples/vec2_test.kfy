@@ -1,0 +1,18 @@
+# pyright: reportUndefinedVariable=false
+
+pos = vec2(100.0, 200.0)
+vel = vec2(2.5, -1.5)
+
+x = pos[0]
+y = pos[1]
+
+# Simulate a few frames of motion
+pos[0] = pos[0] + vel[0]
+pos[1] = pos[1] + vel[1]
+
+new_x = pos[0]
+new_y = pos[1]
+
+print("start: " + str(x) + ", " + str(y))
+print("vel:   " + str(vel[0]) + ", " + str(vel[1]))
+print("after one step: " + str(new_x) + ", " + str(new_y))

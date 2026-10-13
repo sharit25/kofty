@@ -1,0 +1,31 @@
+# pyright: reportUndefinedVariable=false
+
+class Walkable:
+    def __init__(self, name: str):
+        self.name = name
+
+    def walk(self):
+        print(self.name + " walks")
+
+
+class Swimmable:
+    def __init__(self, depth: int):
+        self.depth = depth
+
+    def swim(self):
+        print("Swimming at depth " + str(self.depth))
+
+
+class Duck(Walkable, Swimmable):
+    def __init__(self, name: str, depth: int):
+        Walkable.__init__(self, name)
+        Swimmable.__init__(self, depth)
+
+    def quack(self):
+        print("Quack! I am " + self.name)
+
+
+d = Duck("Donald", 5)
+d.walk()
+d.swim()
+d.quack()

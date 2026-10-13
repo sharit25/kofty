@@ -1,0 +1,43 @@
+# Batch 5b: *args (variadic positional args).
+#
+# Call sites use brace-init: f({1, 2, 3}), f({}).
+# Python positional syntax f(1, 2, 3) is not supported.
+
+def sum_all(*nums):
+    total = 0
+    for n in nums:
+        total = total + n
+    return total
+
+print(sum_all({1, 2, 3}))
+print(sum_all({10, 20, 30, 40}))
+print(sum_all({}))
+
+print("---")
+
+def join_all(*words: str):
+    result = ""
+    for w in words:
+        result = result + w
+    return result
+
+print(join_all({"a", "b", "c"}))
+print(join_all({"hello", " ", "world"}))
+
+print("---")
+
+def count_all(*nums):
+    return len(nums)
+
+print(count_all({5}))
+print(count_all({5, 10, 15, 20}))
+
+print("---")
+
+def first_or_default(fallback, *nums):
+    if len(nums) == 0:
+        return fallback
+    return nums[0]
+
+print(first_or_default(99, {1, 2, 3}))
+print(first_or_default(99, {}))

@@ -1,0 +1,13 @@
+s = "hello world"
+print(s.title())
+print(s.capitalize())
+
+s2 = "hello"
+print(s2.isalpha())
+
+s3 = "123"
+print(s3.isdigit())
+
+s4 = "hello123"
+print(s4.isalpha())
+print(s4.isdigit())

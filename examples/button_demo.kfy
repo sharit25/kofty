@@ -1,0 +1,17 @@
+# pyright: reportUndefinedVariable=false
+
+class Button:
+    def __init__(self, label: str, x: float, y: float):
+        self.label = label
+        self.x = x
+        self.y = y
+        self.w = 80
+        self.h = 40
+
+
+b1 = Button("Click Me", 100, 100)
+b2 = Button("Submit", 100, 200)
+
+print("Button 1: " + b1.label)
+print("Button 2: " + b2.label)
+print("b1 position: " + str(b1.x) + ", " + str(b1.y))

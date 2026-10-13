@@ -1,0 +1,22 @@
+# Batch 2a: string methods.
+
+s = "  Hello, World  "
+print(s.strip())
+print(s.strip().upper())
+print(s.strip().lower())
+
+csv = "a,b,c,d"
+parts = csv.split(",")
+print(parts[0])
+print(parts[3])
+
+joined = "-".join(parts)
+print(joined)
+
+msg = "the quick brown fox"
+print(msg.replace("quick", "slow"))
+print(msg.startswith("the"))
+print(msg.endswith("fox"))
+print(msg.find("brown"))
+print(msg.count("o"))
+

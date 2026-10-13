@@ -1,0 +1,39 @@
+# pyright: reportUndefinedVariable=false
+#
+# set_ops.kfy — demonstrate set support.
+
+a = {1, 2, 3, 4}
+b = {3, 4, 5, 6}
+
+print("a count: " + str(len(a)))
+print("b count: " + str(len(b)))
+
+if 2 in a:
+    print("2 is in a")
+if 7 not in a:
+    print("7 not in a")
+
+print("a elements:")
+for x in a:
+    print("  " + str(x))
+
+a.add(10)
+print("after add: " + str(len(a)))
+
+a.remove(1)
+print("after remove: " + str(len(a)))
+
+a.discard(999)
+print("after discard missing: " + str(len(a)))
+
+u = a | b
+i = a & b
+d = a - b
+s = a ^ b
+print("union count: " + str(len(u)))
+print("intersection count: " + str(len(i)))
+print("difference count: " + str(len(d)))
+print("symdiff count: " + str(len(s)))
+
+a.clear()
+print("after clear: " + str(len(a)))

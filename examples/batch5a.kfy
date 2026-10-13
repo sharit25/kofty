@@ -1,0 +1,32 @@
+# Batch 5a: default arguments.
+
+def greet(name, greeting="Hello"):
+    print(greeting + ", " + name)
+
+greet("Alice")
+greet("Bob", "Hi")
+
+print("---")
+
+def tag(s, prefix="[", suffix="]"):
+    print(prefix + s + suffix)
+
+tag("a")
+tag("b", "<")
+tag("c", "<", ">")
+
+print("---")
+
+def power(base, exp=2):
+    return base ** exp
+
+print(power(3))
+print(power(3, 3))
+
+print("---")
+
+def scale(x, factor=2.0):
+    print(x * factor)
+
+scale(5)
+scale(5, 3.0)

@@ -1,0 +1,15 @@
+# pyright: reportUndefinedVariable=false
+
+x = 3.14
+y = 2.5
+sum_val = x + y
+n = int(sum_val)
+m = float(7)
+
+print("x = " + str(x))
+print("y = " + str(y))
+print("sum = " + str(sum_val))
+print("int(sum) = " + str(n))
+print("float(7) = " + str(m))
+print("int(3.9) = " + str(int(3.9)))
+print("int(-2.7) = " + str(int(-2.7)))

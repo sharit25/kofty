@@ -1,0 +1,15 @@
+x = 3.14159
+print(f"pi ~= {x:.2f}")
+print(f"pi ~= {x:.4f}")
+
+n = 42
+print(f"n = {n:05d}")
+print(f"n = {n:5d}")
+
+s = "hi"
+print(f"[{s:>10}]")
+print(f"[{s:<10}]")
+print(f"[{s:^10}]")
+
+y = 1.5
+print(f"{y:8.3f}")

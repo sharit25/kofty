@@ -1,0 +1,46 @@
+# Batch 6b: raise and try/except.
+
+try:
+    print("in try")
+except Exception:
+    print("caught")
+
+print("---")
+
+try:
+    raise Exception("boom")
+except Exception:
+    print("caught: boom")
+
+print("---")
+
+def risky(x):
+    if x < 0:
+        raise ValueError("negative")
+    print("ok")
+
+try:
+    risky(-1)
+except Exception:
+    print("error handling -1")
+try:
+    risky(5)
+except Exception:
+    print("error handling 5")
+
+print("---")
+
+for i in range(3):
+    try:
+        if i == 1:
+            raise Exception("skip")
+        print(i)
+    except:
+        print("skipped")
+
+print("---")
+
+try:
+    raise RuntimeError
+except Exception:
+    print("bare RuntimeError caught")

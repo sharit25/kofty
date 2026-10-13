@@ -1,0 +1,44 @@
+# Batch 5c: **kwargs (variadic keyword args).
+
+def show(**info):
+    for k, v in info.items():
+        print(k)
+        print(v)
+
+show({"name": "Alice", "age": "30"})
+
+print("---")
+
+def count(**info):
+    return len(info)
+
+print(count({"a": "1"}))
+print(count({"a": "1", "b": "2"}))
+print(count({}))
+
+print("---")
+
+def total(**counts: int):
+    s = 0
+    for v in counts.values():
+        s = s + v
+    return s
+
+print(total({"a": 1, "b": 2, "c": 3}))
+
+print("---")
+
+def has_name(**info):
+    if "name" in info:
+        return 1
+    return 0
+
+print(has_name({"name": "x"}))
+print(has_name({"other": "y"}))
+
+print("---")
+
+def fetch(**data):
+    return data.get("key")
+
+print(fetch({"key": "value", "other": "x"}))

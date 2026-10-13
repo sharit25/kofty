@@ -1,0 +1,33 @@
+# Batch 7c: import time.
+
+import time
+
+t1 = time.time()
+print("got a timestamp")
+
+t2 = time.time()
+elapsed = t2 - t1
+if elapsed >= 0.0:
+    print("time is monotonic")
+
+print("---")
+
+time.sleep(0.01)
+print("after 10ms sleep")
+
+print("---")
+
+t3 = time.time()
+time.sleep(0.05)
+t4 = time.time()
+delta = t4 - t3
+if delta >= 0.04:
+    print("sleep actually waited")
+
+print("---")
+
+# Multiple sleeps accumulate
+time.sleep(0.01)
+time.sleep(0.01)
+time.sleep(0.01)
+print("three naps done")
