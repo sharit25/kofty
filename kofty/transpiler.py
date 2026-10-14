@@ -1937,6 +1937,18 @@ class CppEmitter(ast.NodeVisitor):
                 return f"std::cout << {_prepr} << std::endl"
             return f"std::cout << {args[0]} << std::endl"
 
+        # Batch 12: input() reads a line from stdin.
+        #   input()          -> input_line("")
+        #   input(prompt)    -> input_line("prompt")
+        if name == "input":
+            if len(args) == 0:
+                return 'input_line("")'
+            if len(args) == 1:
+                return f"input_line({args[0]})"
+            raise TranspileError(
+                f"input() takes 0 or 1 argument, got {len(args)}"
+            )
+
         # Special case: str() converts a value to a string.
         # Works on number literals, variables (assumed numeric for now),
         # and expressions. String literals pass through unchanged.
@@ -1976,6 +1988,11 @@ class CppEmitter(ast.NodeVisitor):
                 raise TranspileError(
                     f"int() takes exactly 1 argument, got {len(args)}"
                 )
+            # Batch 12: int(input(...)) parses via std::stoi.
+            if (isinstance(node.args[0], ast.Call)
+                    and isinstance(node.args[0].func, ast.Name)
+                    and node.args[0].func.id == "input"):
+                return f"std::stoi({args[0]})"
             return f"(int){args[0]}"
         # Special case: float(x) → C-style cast to double
         if name == "float":
@@ -1983,6 +2000,11 @@ class CppEmitter(ast.NodeVisitor):
                 raise TranspileError(
                     f"float() takes exactly 1 argument, got {len(args)}"
                 )
+            # Batch 12: float(input(...)) parses via std::stod.
+            if (isinstance(node.args[0], ast.Call)
+                    and isinstance(node.args[0].func, ast.Name)
+                    and node.args[0].func.id == "input"):
+                return f"std::stod({args[0]})"
             return f"(double){args[0]}"
 
         # Special case: ptr(ClassName(args)) → new ClassName(args)
@@ -4226,7 +4248,31 @@ def transpile(source: str) -> str:
         "    }",
         "    return n;",
         "}",
+        "",
+"// Batch 12: input() helper. Prints an optional prompt (no trailing",
+"// newline, matching Python), reads one line from stdin, returns it",
+"// without the trailing newline. Empty prompt means no output.",
+"static std::string input_line(const std::string& prompt) {",
+"    if (!prompt.empty()) {",
+"        std::cout << prompt << std::flush;",
+"    }",
+"    std::string line;",
+"    std::getline(std::cin, line);",
+"    return line;",
+"}",
 
+        "",
+        "// Batch 12: input() helper. Prints an optional prompt (no trailing",
+        "// newline, matching Python), reads one line from stdin, returns it",
+        "// without the trailing newline. Empty prompt means no output.",
+        "static std::string input_line(const std::string& prompt) {",
+        "    if (!prompt.empty()) {",
+        "        std::cout << prompt << std::flush;",
+        "    }",
+        "    std::string line;",
+        "    std::getline(std::cin, line);",
+        "    return line;",
+        "}",
         "// ---- f-string / .format() value coercion ----",
         "static std::string is_to_string(const std::string& s) { return s; }",
         "static std::string is_to_string(const char* s) { return std::string(s); }",
