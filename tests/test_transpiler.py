@@ -163,10 +163,8 @@ def test_class_struct_emitted():
     assert "struct Point {" in out
     assert "int x;" in out
     assert "int y;" in out
-    assert "Point(int x, int y) {" in out
-    assert "this->x = x;" in out
-    assert "this->y = y;" in out
-    assert "};" in out
+    # Batch 10k.3: constructor now uses an initializer list.
+    assert "Point(int x, int y) : x(x), y(y) {" in out
 
 
 def test_class_definition_no_longer_raises():
@@ -833,9 +831,12 @@ def test_parent_constructor_in_initializer_list():
     )
     # The parent constructor call must appear in the initializer list
     assert ": Animal(name)" in out
-    # Child field is declared and set
+    # Child field is declared
     assert "std::string breed;" in out
-    assert "this->breed = breed;" in out
+    # Batch 10k.3: child fields assigned from params are now
+    # initialized in the initializer list, not the body.
+    assert "breed(breed)" in out
+    assert "this->breed = breed;" not in out
 
 
 def test_virtual_on_parent_methods():

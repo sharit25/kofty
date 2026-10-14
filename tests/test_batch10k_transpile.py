@@ -84,3 +84,45 @@ def test_class_field_primitive_in_method_fstring_unchanged():
         "        return f'C({self.n})'\n"
     )
     assert "is_to_string(this->n)" in out
+
+def test_constructor_with_class_field_uses_init_list():
+    out = transpile(
+        "class P:\n"
+        "    def __init__(self, x: int):\n"
+        "        self.x = x\n"
+        "class C:\n"
+        "    def __init__(self, p: P, n: int):\n"
+        "        self.p = p\n"
+        "        self.n = n\n"
+    )
+    # The constructor should use an initializer list for the fields.
+    assert ": p(p), n(n)" in out
+    # Body assignments must be gone.
+    assert "this->p = p" not in out
+    assert "this->n = n" not in out
+
+
+def test_constructor_with_all_primitive_fields_uses_init_list():
+    out = transpile(
+        "class C:\n"
+        "    def __init__(self, n: int, r: float):\n"
+        "        self.n = n\n"
+        "        self.r = r\n"
+    )
+    assert ": n(n), r(r)" in out
+
+
+def test_constructor_with_no_params_has_no_init_list():
+    # __init__ with no params should not emit a `:` immediately after
+    # the constructor's closing paren.
+    out = transpile(
+        "class C:\n"
+        "    def __init__(self):\n"
+        "        self.x = 0\n"
+    )
+    start = out.find("struct C {")
+    assert start != -1, "struct C not emitted"
+    end = out.find("};", start)
+    struct_block = out[start:end]
+    assert "C() :" not in struct_block
+    assert "C() {" in struct_block

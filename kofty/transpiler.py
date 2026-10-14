@@ -3124,20 +3124,54 @@ class CppEmitter(ast.NodeVisitor):
         init_args = [a.arg for a in init_method.args.args if a.arg != "self"]
         args_cpp = ", ".join(f"{param_types[a]} {a}" for a in init_args)
 
+        # Batch 10k.3: build field initializers. Fields assigned
+        # directly from constructor params use an initializer list
+        # so that class-typed fields don't require a default ctor.
+        # Example:
+        #     Circle(Point center, double radius)
+        #         : center(center), radius(radius) {}
+        field_inits = []
+        fields_initialized_in_body = set()
+        for field_name in field_types:
+            if field_name in param_types:
+                field_inits.append(f"{field_name}({field_name})")
+                fields_initialized_in_body.add(field_name)
+
         # Constructor initializer list
+        # Combine parent-init (if any) with field-init (Batch 10k.3).
         if is_multi:
-            init_list = ", ".join(super_args_cpp)
-            lines.append(f"    {class_name}({args_cpp}) : {init_list} {{")
+            parent_init = ", ".join(super_args_cpp) if super_args_cpp else ""
+            all_inits = ", ".join(filter(None, [parent_init] + field_inits))
+            if all_inits:
+                lines.append(f"    {class_name}({args_cpp}) : {all_inits} {{")
+            else:
+                lines.append(f"    {class_name}({args_cpp}) {{")
         elif parent_name is not None and super_args_cpp is not None:
             parent_args = ", ".join(super_args_cpp)
-            lines.append(f"    {class_name}({args_cpp}) : {parent_name}({parent_args}) {{")
+            parent_init = f"{parent_name}({parent_args})"
+            all_inits = ", ".join([parent_init] + field_inits)
+            lines.append(f"    {class_name}({args_cpp}) : {all_inits} {{")
+        elif field_inits:
+            all_inits = ", ".join(field_inits)
+            lines.append(f"    {class_name}({args_cpp}) : {all_inits} {{")
         else:
             lines.append(f"    {class_name}({args_cpp}) {{")
 
-        # Body (without the super().__init__ call)
-        lines.extend(self._emit_method_body(init_body))
+        # Body (without the super().__init__ call, and without field
+        # assignments that are now handled by the initializer list).
+        body_to_emit = [
+            stmt for stmt in init_body
+            if not (
+                isinstance(stmt, ast.Assign)
+                and len(stmt.targets) == 1
+                and isinstance(stmt.targets[0], ast.Attribute)
+                and isinstance(stmt.targets[0].value, ast.Name)
+                and stmt.targets[0].value.id == "self"
+                and stmt.targets[0].attr in fields_initialized_in_body
+            )
+        ]
+        lines.extend(self._emit_method_body(body_to_emit))
         lines.append("    }")
-
         # 3. Other methods — virtual if parent class, override if child class
         # Is this class a parent of anything? If so, methods are `virtual`.
         is_base_class = any(
