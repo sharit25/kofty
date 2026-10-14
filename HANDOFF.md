@@ -1157,3 +1157,161 @@ lambda, match/case, try/except, math/random/time, for-else,
 enumerate, zip. It compiles and runs end-to-end.
 
     kofty examples/vscode_demo.kfy
+
+## 35. Batch 10l changelog (2026-10-14)
+
+### int / int emits true (float) division
+
+**Bug.** `7 / 3` emitted `(7 / 3)` — C++ integer division → `2`.
+Python gives `2.333...`. Kofty's existing test
+(`test_float_division_not_truncated`) only covered `5.0 / 2.0`
+where C++ naturally gives float — it never tested the int/int case.
+
+**Fix — two anchors in `kofty/transpiler.py`:**
+
+1. New `_is_int_expr(node)` helper: returns True for
+   `ast.Constant(int)`, `ast.Name` not tracked as a container
+   or user class, and int-preserving `BinOp`/`UnaryOp`.
+2. New branch in `expr()`'s `ast.BinOp` for `ast.Div`: when both
+   sides are int-typed, emit `((double)L / (double)R)`. Otherwise
+   emit `(L / R)` as before.
+
+**Tests:** `tests/test_batch10l_transpile.py`, 7 tests.
+
+Commit: 1812267.
+
+## 36. Batch 10l.1 changelog (2026-10-14)
+
+### UTF-8 BOM tolerance
+
+**Bug.** A `.kfy` file written by PowerShell's
+`Set-Content -Encoding utf8`, Notepad, or Visual Studio — all of
+which emit BOM-prefixed UTF-8 — crashed Python's `ast.parse`
+with "invalid non-printable character U+FEFF".
+
+**Fix — one-line change in `kofty/cli.py`:**
+
+    src_path.read_text(encoding="utf-8")     # before
+    src_path.read_text(encoding="utf-8-sig") # after
+
+`utf-8-sig` strips a leading BOM if present, otherwise behaves
+identically to `utf-8`.
+
+Commit: c9a3681.
+
+## 37. Batch 10m changelog (2026-10-14)
+
+### `kofty <file>` searches subdirectories
+
+**Bug.** `kofty CalcTwoNum.kfy` only worked if the file was in
+the current directory. From the project root, it said
+"File not found" even if the file existed at `examples\...`.
+
+**Fix — one new helper in `kofty/cli.py`:**
+
+`_resolve_source_file(name)` tries:
+1. The path as given (relative to CWD)
+2. If the arg has no path separators, a recursive search of CWD
+   (up to 3 levels deep) for a unique file of that name
+3. If zero matches → None (caller prints "not found")
+4. If multiple → prints all candidates and returns None
+
+**Tests:** `tests/test_cli_resolve.py`, 5 tests.
+
+Commit: 5885c11.
+
+## 38. Batch 10n / 10n.1 changelog (2026-10-14)
+
+### `kofty init` writes VS Code project setup
+
+**Feature.** New `kofty init` subcommand that writes:
+- `.vscode/tasks.json` — enables Ctrl+Shift+B to build+run the
+  currently-focused `.kfy` file via `python -m kofty.cli ${file}`
+- `.vscode/settings.json` — maps `*.kfy` → Python syntax
+  highlighting, plus 4-space indentation defaults
+
+Refuses to overwrite existing files; reports what it wrote.
+
+**Fix — `kofty/cli.py`:**
+- New `_TASKS_JSON` and `_SETTINGS_JSON` constants
+- New `_run_init()` function
+- Early dispatch in `main()`: if `argv[0] == "init"`, run init
+  instead of argparse
+
+**Tests:** `tests/test_cli_init.py`, 8 tests.
+
+Commits: 99a4473 (10n/10n.1 combined), 560d440 (HANDOFF + example).
+
+## 39. Batch 10o changelog (2026-10-14)
+
+### Kofty Icons VS Code extension
+
+**Feature.** A minimal VS Code icon-theme extension that shows
+the Kofty logo on `.kfy` and `.is` files. Ships with its own
+`kofty.svg` and `kofty_mono.svg`. Bypasses Material Icon Theme
+entirely.
+
+**Location:** `vscode-kofty/` — a separate npm project inside
+the repo.
+
+**Files:**
+- `vscode-kofty/package.json` — extension manifest, declares
+  one iconTheme contribution
+- `vscode-kofty/icons/kofty-icon-theme.json` — maps `.kfy` and
+  `.is` → `./kofty.svg`
+- `vscode-kofty/icons/kofty.svg` — copied from `kofty/data/`
+- `vscode-kofty/README.md`, `LICENSE`, `.vscodeignore` — packaging
+
+**Build:** requires Node.js. `npm install -g @vscode/vsce` then
+`cd vscode-kofty && vsce package` produces `kofty-icons-0.1.0.vsix`.
+Install with `code --install-extension kofty-icons-0.1.0.vsix`.
+Activate via `Preferences: File Icon Theme` → "Kofty Icons".
+
+**Caveat — VS Code icon themes are one-at-a-time.** Activating
+"Kofty Icons" replaces the current theme entirely for files we
+don't map. Everything not `.kfy`/`.is` falls back to VS Code's
+bare-minimum generic page icon (not Seti's rich icons).
+
+**Attempted and rejected:**
+- Merging Seti's icon set into our theme — Seti's
+  `seti-icon-theme.json` is not shipped as a file on disk in
+  VS Code 1.80+; it's bundled inside `app.asar`. Can't copy.
+- Material Icon Theme's `customClones` — only clones built-in
+  icons with different colors, doesn't accept custom SVGs.
+- Material Icon Theme's `material-icon-theme-custom-icons`
+  globalStorage folder — v5.39 removed support entirely.
+
+**Decision:** ship the extension as-is. `.kfy` files get the
+Kofty logo; everything else gets the plain fallback. If the
+plain look becomes annoying, uninstall the extension and switch
+back to Seti — but lose the Kofty logo.
+
+Commit: d16e1e2.
+
+## 40. Session wrap-up (2026-10-14)
+
+**Batches completed this session:**
+10e, 10f, 10g, 10h, 10i, 10j, 10k.1, 10k.2, 10k.3,
+10l, 10l.1, 10m, 10n, 10n.1, 10o.
+
+**Test count:** 500 transpile-only + 8 cli-init + 5 cli-resolve
+= 513 total passing.
+
+**The demo `examples/vscode_demo.kfy` runs end-to-end.**
+
+**New workflow for fresh projects:**
+
+    mkdir myproject && cd myproject
+    kofty init
+    # create CalcTwoNum.kfy in VS Code
+    # press Ctrl+Shift+B, or type `kofty CalcTwoNum.kfy`
+
+**Open follow-ups (from earlier sections):**
+- GitHub Actions CI (Batch 11-alt)
+- Publish `kofty` to PyPI (Batch 11)
+- Demo regression test in `tests/`
+- Any remaining feature work from section 5
+
+**Icon caveat:** activating "Kofty Icons" replaces rich Seti
+icons with plain fallbacks on non-`.kfy` files. This is a
+known trade-off, documented in section 39.
