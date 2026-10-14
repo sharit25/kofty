@@ -2918,6 +2918,19 @@ class CppEmitter(ast.NodeVisitor):
 
         self.current_function = node.name
 
+        # Batch 10k.1: register class-typed parameters in
+        # instance_vars so that `p.x`, `p.property`, `is_to_string(p)`,
+        # and `{p}` in f-strings all dispatch as if `p` were a
+        # tracked instance variable. Save/restore so params don't
+        # leak past this function's body.
+        saved_instance_vars = dict(self.instance_vars)
+        for a in node.args.args:
+            if a.annotation is None:
+                continue
+            t = self._annot_to_cpp_type(a.annotation)
+            if t in self.user_classes:
+                self.instance_vars[a.arg] = t
+
         # We emit functions *before* main(), so we collect them separately.
         body_lines = []
         saved_lines, saved_indent = self.lines, self.indent
@@ -2925,6 +2938,9 @@ class CppEmitter(ast.NodeVisitor):
         for stmt in node.body:
             self.visit(stmt)
         self.lines, self.indent = saved_lines, saved_indent
+
+        # Restore instance_vars to its pre-call state.
+        self.instance_vars = saved_instance_vars
 
         func = [f"{ret_type} {node.name}({args_cpp}) {{"]
         func.extend("    " * 1 + l for l in body_lines)
