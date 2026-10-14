@@ -132,6 +132,9 @@ class CppEmitter(ast.NodeVisitor):
         self.instance_vars: dict = {}   # var name -> class name (for print/str dispatch)
         self.class_field_types: dict = {}  # Batch 10k.2: class name -> {field -> C++ type}
         self.str_classes: set = set()   # user classes that define __str__
+        # Batch 11a: name -> literal string captured at assignment time.
+        # Used by .format() on a variable receiver.
+        self.str_literal_vars: dict = {}
         self.add_classes: set = set()   # user classes that define __add__
         # Batch 8d: property tracking.
         self.property_getters: dict = {}   # class name -> set of @property names
@@ -1717,17 +1720,36 @@ class CppEmitter(ast.NodeVisitor):
             if _sm == "isdigit" and not args:
                 return f"str_isdigit({_recv})"
 
-            # ---- .format() on a string literal ------------------
-            # Only handles the literal-receiver case (the common
-            # one). Variable receivers go through the generic
-            # fallback and produce s.format(...) which won't
-            # compile -- acceptable for now; variable-receiver
-            # format() is out of scope for Batch 2b.
+            # ---- .format() on a string receiver -----------------
+            # Batch 2b: literal receivers.
+            # Batch 11a: variable receivers whose literal was captured
+            # at assignment time. Untracked names raise.
             if (isinstance(node.func, ast.Attribute)
-                    and node.func.attr == "format"
-                    and isinstance(node.func.value, ast.Constant)
-                    and isinstance(node.func.value.value, str)):
-                return self._emit_format(node)
+                    and node.func.attr == "format"):
+                recv = node.func.value
+                if (isinstance(recv, ast.Constant)
+                        and isinstance(recv.value, str)):
+                    return self._emit_format(node)
+                if (isinstance(recv, ast.Name)
+                        and recv.id in self.str_literal_vars):
+                    lit = self.str_literal_vars[recv.id]
+                    synth = ast.Call(
+                        func=ast.Attribute(
+                            value=ast.Constant(value=lit),
+                            attr="format",
+                            ctx=ast.Load(),
+                        ),
+                        args=node.args,
+                        keywords=node.keywords,
+                    )
+                    ast.fix_missing_locations(synth)
+                    return self._emit_format(synth)
+                if isinstance(recv, ast.Name):
+                    raise TranspileError(
+                        f".format() on variable '{recv.id}' requires "
+                        f"'{recv.id}' to be initialized from a string "
+                        f"literal earlier in the same scope"
+                    )
 
             # self.method(...) → this->method(...)
             if (isinstance(node.func.value, ast.Name)
@@ -2053,6 +2075,10 @@ class CppEmitter(ast.NodeVisitor):
             _vcls = self._class_of_expr(node.value)
             if _vcls is not None:
                 self.instance_vars[name] = _vcls
+            # Batch 11a: capture string literals for .format() on a var.
+            if (isinstance(node.value, ast.Constant)
+                    and isinstance(node.value.value, str)):
+                self.str_literal_vars[name] = node.value.value
             # Batch 8e: `x = ClassName.classmethod(...)` or
             # `x = obj.classmethod(...)` — register x as an instance
             # of the class that defines the classmethod, so later
@@ -2910,6 +2936,7 @@ class CppEmitter(ast.NodeVisitor):
 
         arg_parts = []
         for i, a in enumerate(node.args.args):
+            self._check_name(a.arg, "Parameter name")
             has_default = i >= first_default_idx
             default_node = (
                 defaults[i - first_default_idx] if has_default else None
@@ -3442,6 +3469,8 @@ class CppEmitter(ast.NodeVisitor):
                 method_args = [
                     a.arg for a in method.args.args if a.arg != "self"
                 ]
+                for _a in method_args:
+                    self._check_name(_a, "Parameter name")
                 method_args_cpp = ", ".join(f"int {a}" for a in method_args)
                 override_kw = ""
                 lines.append("")
@@ -3456,6 +3485,7 @@ class CppEmitter(ast.NodeVisitor):
                 # Static methods have no `self` parameter
                 method_args_cpp_parts = []
                 for a in method.args.args:
+                    self._check_name(a.arg, "Parameter name")
                     arg_type = self._annot_to_cpp_type(a.annotation)
                     method_args_cpp_parts.append(f"{arg_type} {a.arg}")
                 method_args_cpp = ", ".join(method_args_cpp_parts)
@@ -3474,6 +3504,8 @@ class CppEmitter(ast.NodeVisitor):
             method_args = [
                 a.arg for a in method.args.args if a.arg != "self"
             ]
+            for _a in method_args:
+                self._check_name(_a, "Parameter name")
             method_args_cpp = ", ".join(f"int {a}" for a in method_args)
 
             ret_type, virtual_kw = self._method_return_type(method, has_return)
