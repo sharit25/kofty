@@ -188,7 +188,12 @@ def main(argv=None) -> int:
     cpp_file = out_dir / (src_path.stem + ".cpp")
     exe_file = out_dir / (src_path.stem + ".exe")
 
-    if not build_cpp(src_path.read_text(encoding="utf-8"), cpp_file):
+    # utf-8-sig strips a leading UTF-8 BOM if present, and behaves
+    # like plain utf-8 otherwise. This makes .kfy files created by
+    # PowerShell's Set-Content, Notepad, or Visual Studio (all of
+    # which write BOM-prefixed UTF-8 by default on Windows) parse
+    # correctly.
+    if not build_cpp(src_path.read_text(encoding="utf-8-sig"), cpp_file):
         return 1
 
     print(f"[Kofty] Wrote {cpp_file}")
