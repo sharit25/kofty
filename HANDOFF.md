@@ -1147,3 +1147,13 @@ All fixed. Demo runs. 493 transpile tests green.
 **Lesson:** write a real program. Tests written by the same
 author as the feature have the same blind spots. A demo that
 attempts a lot will find the gaps the tests didn't.
+
+## End-to-end example
+
+`examples/vscode_demo.kfy` is a full tour of the language:
+strings, f-strings, lists, dicts, sets, tuples, classes,
+`__str__` / `__eq__` / `__add__`, properties, classmethods,
+lambda, match/case, try/except, math/random/time, for-else,
+enumerate, zip. It compiles and runs end-to-end.
+
+    kofty examples/vscode_demo.kfy
