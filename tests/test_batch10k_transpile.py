@@ -57,3 +57,30 @@ def test_class_param_in_fstring_with_property():
         "    print(f'd = {p.dbl}')\n"
     )
     assert "p.dbl()" in out
+
+def test_class_field_in_method_fstring_dispatches_str():
+    out = transpile(
+        "class P:\n"
+        "    def __init__(self, x: int):\n"
+        "        self.x = x\n"
+        "    def __str__(self):\n"
+        "        return 'P'\n"
+        "class C:\n"
+        "    def __init__(self, p: P):\n"
+        "        self.p = p\n"
+        "    def __str__(self):\n"
+        "        return f'C({self.p})'\n"
+    )
+    assert "this->p.__str__()" in out
+    assert "is_to_string(this->p)" not in out
+
+
+def test_class_field_primitive_in_method_fstring_unchanged():
+    out = transpile(
+        "class C:\n"
+        "    def __init__(self, n: int):\n"
+        "        self.n = n\n"
+        "    def __str__(self):\n"
+        "        return f'C({self.n})'\n"
+    )
+    assert "is_to_string(this->n)" in out

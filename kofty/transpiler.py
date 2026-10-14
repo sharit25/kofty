@@ -130,6 +130,7 @@ class CppEmitter(ast.NodeVisitor):
         self.vec2_vars: set = set()             # names known to hold vec2 (std::pair<double,double>)
         # Batch 8b: instance tracking for __str__ dispatch.
         self.instance_vars: dict = {}   # var name -> class name (for print/str dispatch)
+        self.class_field_types: dict = {}  # Batch 10k.2: class name -> {field -> C++ type}
         self.str_classes: set = set()   # user classes that define __str__
         self.add_classes: set = set()   # user classes that define __add__
         # Batch 8d: property tracking.
@@ -304,6 +305,17 @@ class CppEmitter(ast.NodeVisitor):
             _rcls = self._class_of_expr(node.right)
             if _lcls is not None and _lcls == _rcls:
                 return _lcls
+
+        # Batch 10k.2: `self.field` reads inside a method body — look
+        # up the field type from the enclosing class.
+        if (isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "self"
+                and self._current_class):
+            ftype = self.class_field_types.get(
+                self._current_class, {}).get(node.attr)
+            if ftype is not None and ftype in self.user_classes:
+                return ftype
         return None
 
     # ---- helpers ---------------------------------------------------------
@@ -3055,6 +3067,11 @@ class CppEmitter(ast.NodeVisitor):
                             field_types[field_name] = param_types[stmt.value.id]
                         else:
                             field_types[field_name] = self._infer_field_type(stmt.value)
+
+        # Batch 10k.2: remember field types by class name so that
+        # `self.field` reads inside method bodies can resolve to a
+        # user-class type for __str__ / property dispatch.
+        self.class_field_types[class_name] = dict(field_types)
 
         # Build the struct block
         if bases:
