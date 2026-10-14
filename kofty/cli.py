@@ -144,6 +144,62 @@ def compile_cpp(cpp_file: Path, exe_file: Path, icon=None) -> bool:
     result = subprocess.run(cmd)
     return result.returncode == 0
 
+def _resolve_source_file(name: str) -> Path | None:
+    """Resolve a Kofty source file by name.
+
+    Resolution order (Batch 10m):
+      1. The path as given, relative to CWD (current behavior).
+      2. A recursive search of CWD for a file with that name
+         (up to 3 levels deep). If exactly one match is found,
+         return it. If multiple, print all candidates and return
+         None (caller should exit). If zero, return None with no
+         message — the caller prints "not found".
+    """
+    direct = Path(name)
+    if direct.exists():
+        return direct
+
+    # Only search if the argument was a bare filename. If the user
+    # gave a path with separators (e.g. `sub/foo.kfy`), don't search
+    # — they told us where to look, respect that.
+    if "/" in name or "\\" in name:
+        return None
+
+    # Recursive search. `rglob` on `.` walks the whole tree; we
+    # filter to keep the search shallow and fast.
+    candidates = []
+    try:
+        for p in Path(".").rglob(name):
+            if not p.is_file():
+                continue
+            # Depth check: count path parts relative to "."
+            try:
+                rel = p.relative_to(Path("."))
+            except ValueError:
+                continue
+            # Allow `.`, `./sub/`, `./a/b/` = depth 1, 2, 3
+            if len(rel.parts) > 3:
+                continue
+            candidates.append(p)
+    except OSError:
+        # Permissions, symlink loops, etc. — treat as no match.
+        return None
+
+    if len(candidates) == 1:
+        return candidates[0]
+    if len(candidates) > 1:
+        print(
+            f"[Kofty] Ambiguous filename: {name!r} matches "
+            f"{len(candidates)} files:",
+            file=sys.stderr,
+        )
+        for c in candidates:
+            print(f"  {c}", file=sys.stderr)
+        print(
+            "[Kofty] Please pass the full path.",
+            file=sys.stderr,
+        )
+    return None
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(prog="kofty")
@@ -167,9 +223,9 @@ def main(argv=None) -> int:
         parser.print_help()
         return 1
 
-    src_path = Path(args.file)
-    if not src_path.exists():
-        print(f"[Kofty] File not found: {src_path}", file=sys.stderr)
+    src_path = _resolve_source_file(args.file)
+    if src_path is None:
+        print(f"[Kofty] File not found: {args.file}", file=sys.stderr)
         return 1
 
     # Kofty source files use the .is extension. We also accept .py
