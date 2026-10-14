@@ -135,6 +135,9 @@ class CppEmitter(ast.NodeVisitor):
         # Batch 11a: name -> literal string captured at assignment time.
         # Used by .format() on a variable receiver.
         self.str_literal_vars: dict = {}
+        # Batch 11b: name -> tuple arity returned by a function.
+        # Populated in visit_FunctionDef; consumed in visit_Assign.
+        self.func_return_arity: dict = {}
         self.add_classes: set = set()   # user classes that define __add__
         # Batch 8d: property tracking.
         self.property_getters: dict = {}   # class name -> set of @property names
@@ -2035,6 +2038,13 @@ class CppEmitter(ast.NodeVisitor):
             # Track tuple arity so subscript dispatch knows pair vs tuple.
             if isinstance(node.value, ast.Tuple):
                 self.tuple_vars[name] = len(node.value.elts)
+            # Batch 11b: `t = make()` where make returns a known-arity tuple.
+            elif (isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Name)
+                    and node.value.func.id in self.func_return_arity):
+                self.tuple_vars[name] = self.func_return_arity[
+                    node.value.func.id
+                ]
 
             # Optional variable: `x = None` then later `x = 5`
             if name in self.optional_vars:
@@ -2290,6 +2300,11 @@ class CppEmitter(ast.NodeVisitor):
             if (isinstance(node.value, ast.Name)
                     and node.value.id in self.tuple_vars):
                 arity = self.tuple_vars[node.value.id]
+            # Batch 11b: `a, b, c = make()` — arity from the function.
+            elif (isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Name)
+                    and node.value.func.id in self.func_return_arity):
+                arity = self.func_return_arity[node.value.func.id]
             for i, elt in enumerate(target.elts):
                 self._check_name(elt.id, "Variable name")
                 if arity == 2:
@@ -2915,10 +2930,56 @@ class CppEmitter(ast.NodeVisitor):
                     # Can't infer; fall through to try other returns
         return "int"
 
+    def _infer_tuple_return_arity(self, node: ast.FunctionDef):
+        """Batch 11b: return the tuple arity this function returns, or None.
+
+        Checks two sources:
+          1. `-> tuple[...]` annotation. Arity = number of elements in
+             the subscript slice (or 1 for a single-element form).
+          2. Unannotated: every `Return` in the body whose value is a
+             Tuple literal must have the same arity. If they all agree,
+             use that; otherwise None.
+        Scalar returns, or no returns, yield None.
+        """
+        # Annotated case: -> tuple[a, b, c]
+        if node.returns is not None:
+            r = node.returns
+            if (isinstance(r, ast.Subscript)
+                    and isinstance(r.value, ast.Name)
+                    and r.value.id == "tuple"):
+                sl = r.slice
+                if isinstance(sl, ast.Tuple):
+                    return len(sl.elts)
+                if isinstance(sl, ast.Name):
+                    # Bare `tuple[x]` -> arity 1
+                    return 1
+                # tuple[()] or anything else: unknown
+                return None
+
+        # Unannotated: scan returns for a tuple literal.
+        arities = set()
+        for stmt in ast.walk(node):
+            if isinstance(stmt, ast.Return) and stmt.value is not None:
+                if isinstance(stmt.value, ast.Tuple):
+                    arities.add(len(stmt.value.elts))
+                else:
+                    # A non-tuple return makes the tuple arity unreliable.
+                    arities.add(None)
+        if arities == {3}:
+            return 3
+        if len(arities) == 1 and None not in arities:
+            return arities.pop()
+        return None
+
     def visit_FunctionDef(self, node: ast.FunctionDef):
         """User-defined function. Uses `auto` return type unless annotated."""
         self._check_name(node.name, "Function name")
         self.user_funcs.add(node.name)
+
+        # Batch 11b: record tuple return arity, if determinable.
+        _arity = self._infer_tuple_return_arity(node)
+        if _arity is not None:
+            self.func_return_arity[node.name] = _arity
 
         # Parameter handling:
         #   1. Annotated param  -> use annotation type
