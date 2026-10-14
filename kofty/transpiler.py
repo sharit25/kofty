@@ -726,75 +726,84 @@ class CppEmitter(ast.NodeVisitor):
             return f"std::make_tuple({', '.join(parts)})"
 
         if isinstance(node, ast.List):
-            # Only literal lists (no computed elements, no nesting) for now.
-            # Element type inferred from the literals:
-            #   all int     → std::vector<int>
-            #   any float   → std::vector<double>
-            #   any string  → std::vector<std::string>
+            # Literal lists only. Element types supported:
+            #   scalars         → std::vector<T>
+            #   tuples (N >= 2) → std::vector<std::pair<..>> (N=2)
+            #                     or std::vector<std::tuple<..>> (N>=3)
+            # Empty lists and nested lists are rejected.
             if len(node.elts) == 0:
                 raise TranspileError(
                     "empty list literals are not supported (no type to "
                     "infer). Add at least one element."
                 )
-            # Infer element type. Negative numbers like -3 parse as
-            # UnaryOp(USub, Constant(3)), so unwrap sign first.
+
             def _unwrap_sign(elt):
                 if (isinstance(elt, ast.UnaryOp)
                         and isinstance(elt.op, (ast.USub, ast.UAdd))):
                     return elt.operand
                 return elt
 
+            def _scalar_cpp(n):
+                n = _unwrap_sign(n)
+                if not isinstance(n, ast.Constant):
+                    raise TranspileError(
+                        "List-of-tuple elements must be scalar literals."
+                    )
+                v = n.value
+                if isinstance(v, bool):
+                    return "bool"
+                if isinstance(v, int):
+                    return "int"
+                if isinstance(v, float):
+                    return "double"
+                if isinstance(v, str):
+                    return "std::string"
+                raise TranspileError(
+                    f"Unsupported tuple element: {v!r}"
+                )
+
+            # List of tuples: first element is a tuple literal.
+            if isinstance(node.elts[0], ast.Tuple):
+                _t0 = node.elts[0]
+                if len(_t0.elts) < 2:
+                    raise TranspileError(
+                        "List-of-tuple elements must have arity >= 2; "
+                        f"got {len(_t0.elts)}."
+                    )
+                _elem_arity = len(_t0.elts)
+                _elem_types = tuple(_scalar_cpp(e) for e in _t0.elts)
+                for elt in node.elts[1:]:
+                    if (not isinstance(elt, ast.Tuple)
+                            or len(elt.elts) != _elem_arity):
+                        raise TranspileError(
+                            f"All list elements must be {_elem_arity}-tuples "
+                            f"of the same element types."
+                        )
+                    this_types = tuple(_scalar_cpp(e) for e in elt.elts)
+                    if this_types != _elem_types:
+                        raise TranspileError(
+                            "List-of-tuple elements must have the same "
+                            "types across the list."
+                        )
+                if _elem_arity == 2:
+                    _elem_cpp = f"std::pair<{_elem_types[0]}, {_elem_types[1]}>"
+                else:
+                    _elem_cpp = ("std::tuple<"
+                                 + ", ".join(_elem_types) + ">")
+                tuples_cpp = []
+                for elt in node.elts:
+                    inner = ", ".join(self.expr(e) for e in elt.elts)
+                    tuples_cpp.append(f"{_elem_cpp}{{{inner}}}")
+                return (
+                    f"std::vector<{_elem_cpp}>{{"
+                    + ", ".join(tuples_cpp) + "}"
+                )
+
+            # Scalar list: infer a single element type.
             has_float = False
             has_int = False
             has_str = False
-            # Batch 11c.1: if the first element is a 2-tuple literal,
-            # treat the list as a list-of-pairs.
-            _elem_pair_types = None  # (T1, T2) if list of pairs
-            if node.elts and isinstance(node.elts[0], ast.Tuple):
-                _t0 = node.elts[0]
-                if len(_t0.elts) != 2:
-                    raise TranspileError(
-                        "List elements must be 2-tuples for now "
-                        f"(got {len(_t0.elts)}-tuple)."
-                    )
-                def _scalar_cpp_type(n):
-                    n = _unwrap_sign(n)
-                    if not isinstance(n, ast.Constant):
-                        raise TranspileError(
-                            "List-of-pair elements must be scalar literals."
-                        )
-                    v = n.value
-                    if isinstance(v, bool):
-                        return "bool"
-                    if isinstance(v, int):
-                        return "int"
-                    if isinstance(v, float):
-                        return "double"
-                    if isinstance(v, str):
-                        return "std::string"
-                    raise TranspileError(
-                        f"Unsupported pair element: {v!r}"
-                    )
-                _elem_pair_types = (
-                    _scalar_cpp_type(_t0.elts[0]),
-                    _scalar_cpp_type(_t0.elts[1]),
-                )
-                # Validate every element is a 2-tuple with same element types.
-                for elt in node.elts[1:]:
-                    if not isinstance(elt, ast.Tuple) or len(elt.elts) != 2:
-                        raise TranspileError(
-                            "All list elements must be 2-tuples of the "
-                            "same element types."
-                        )
-                    t1 = _scalar_cpp_type(elt.elts[0])
-                    t2 = _scalar_cpp_type(elt.elts[1])
-                    if (t1, t2) != _elem_pair_types:
-                        raise TranspileError(
-                            "List-of-pair elements must have the same "
-                            "types across the list."
-                        )
-                has_int = True  # suppresses the str/int mix check below
-            for elt in ([] if _elem_pair_types else node.elts):
+            for elt in node.elts:
                 inner = _unwrap_sign(elt)
                 if isinstance(inner, ast.Constant):
                     if isinstance(inner.value, bool):
@@ -826,36 +835,6 @@ class CppEmitter(ast.NodeVisitor):
                 elem_type = "double"
             else:
                 elem_type = "int"
-            # Batch 11c.1b: if the element nodes are 2-tuples, emit
-            # std::vector<std::pair<T1, T2>>{...} directly.
-            if (node.elts
-                    and isinstance(node.elts[0], ast.Tuple)
-                    and len(node.elts[0].elts) == 2):
-                def _scalar_cpp(n):
-                    if isinstance(n, ast.UnaryOp):
-                        n = n.operand
-                    v = n.value
-                    if isinstance(v, bool): return "bool"
-                    if isinstance(v, int): return "int"
-                    if isinstance(v, float): return "double"
-                    if isinstance(v, str): return "std::string"
-                    raise TranspileError(
-                        f"Unsupported pair element: {v!r}"
-                    )
-                t1 = _scalar_cpp(node.elts[0].elts[0])
-                t2 = _scalar_cpp(node.elts[0].elts[1])
-                _pair_cpp = f"std::pair<{t1}, {t2}>"
-                pairs_cpp = []
-                for elt in node.elts:
-                    pairs_cpp.append(
-                        f"{_pair_cpp}{{{self.expr(elt.elts[0])}, "
-                        f"{self.expr(elt.elts[1])}}}"
-                    )
-                return (
-                    f"std::vector<{_pair_cpp}>{{"
-                    + ", ".join(pairs_cpp) + "}"
-                )
-
             elts_cpp = ", ".join(self.expr(e) for e in node.elts)
             return f"std::vector<{elem_type}>{{{elts_cpp}}}"
 
@@ -2359,10 +2338,9 @@ class CppEmitter(ast.NodeVisitor):
                     # Batch 11c.1: compute the element C++ type so
                     # for-loops and other dispatch know what's inside.
                     _elts = node.value.elts
-                    _et = "int"
                     if _elts:
                         _first = _elts[0]
-                        if isinstance(_first, ast.Tuple) and len(_first.elts) == 2:
+                        if isinstance(_first, ast.Tuple) and len(_first.elts) >= 2:
                             def _scalar_cpp(n):
                                 v = n.value
                                 if isinstance(v, bool): return "bool"
@@ -2370,8 +2348,12 @@ class CppEmitter(ast.NodeVisitor):
                                 if isinstance(v, float): return "double"
                                 if isinstance(v, str): return "std::string"
                                 return "int"
-                            _et = (f"std::pair<{_scalar_cpp(_first.elts[0])}, "
-                                   f"{_scalar_cpp(_first.elts[1])}>")
+                            _types = [_scalar_cpp(e) for e in _first.elts]
+                            if len(_types) == 2:
+                                _et = f"std::pair<{_types[0]}, {_types[1]}>"
+                            else:
+                                _et = ("std::tuple<"
+                                       + ", ".join(_types) + ">")
                         elif isinstance(_first, ast.Constant):
                             v = _first.value
                             if isinstance(v, bool): _et = "bool"
@@ -2879,31 +2861,45 @@ class CppEmitter(ast.NodeVisitor):
             self.emit("}")
             return
 
-        # Batch 11c.1: for a, b in xs  where xs is a list of pairs.
+        # Batch 11c.1/11c.2: for a, b, [c, ...] in xs where xs is a
+        # known list of pairs or tuples.
         if isinstance(node.target, ast.Tuple):
-            if len(node.target.elts) != 2:
+            if len(node.target.elts) < 2:
                 raise TranspileError(
-                    "Tuple-unpacking for-loops must have exactly 2 "
-                    "targets for now."
+                    "Tuple-unpacking for-loops need at least 2 targets."
                 )
-            a_name = node.target.elts[0].id
-            b_name = node.target.elts[1].id
-            self._check_name(a_name, "Loop variable")
-            self._check_name(b_name, "Loop variable")
+            target_names = [e.id for e in node.target.elts]
+            for tn in target_names:
+                self._check_name(tn, "Loop variable")
+            elem_type = None
             if (isinstance(node.iter, ast.Name)
                     and node.iter.id in self.list_vars
-                    and isinstance(self.list_vars[node.iter.id], str)
-                    and self.list_vars[node.iter.id].startswith(
-                        "std::pair<")):
+                    and isinstance(self.list_vars[node.iter.id], str)):
+                elem_type = self.list_vars[node.iter.id]
+            is_pair = (elem_type is not None
+                       and elem_type.startswith("std::pair<"))
+            is_tuple = (elem_type is not None
+                        and elem_type.startswith("std::tuple<"))
+            if is_pair or is_tuple:
                 list_name = node.iter.id
+                n = len(target_names)
+                if is_pair and n != 2:
+                    raise TranspileError(
+                        f"Unpacking a list of pairs requires exactly 2 "
+                        f"targets; got {n}."
+                    )
                 self.emit(
                     f"for (const auto& __it : {list_name}) {{"
                 )
                 self.indent += 1
-                self.emit(f"auto {a_name} = __it.first;")
-                self.emit(f"auto {b_name} = __it.second;")
-                self.declared.add(a_name)
-                self.declared.add(b_name)
+                if is_pair:
+                    self.emit(f"auto {target_names[0]} = __it.first;")
+                    self.emit(f"auto {target_names[1]} = __it.second;")
+                else:
+                    for i, tn in enumerate(target_names):
+                        self.emit(f"auto {tn} = std::get<{i}>(__it);")
+                for tn in target_names:
+                    self.declared.add(tn)
                 for stmt in node.body:
                     self.visit(stmt)
                 self.indent -= 1
@@ -2911,7 +2907,7 @@ class CppEmitter(ast.NodeVisitor):
                 return
             raise TranspileError(
                 "Tuple-unpacking for-loop only supports iterating a "
-                "known list of pairs."
+                "known list of pairs or tuples."
             )
 
         if not isinstance(node.target, ast.Name):
