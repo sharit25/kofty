@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512">
+  <!-- Background: rounded square in Kofty blue -->
+  <rect x="0" y="0" width="512" height="512" rx="96" ry="96" fill="#1E3A8A"/>
+
+  <!-- Inner chevron / forge-funnel mark in white -->
+  <g fill="#FFFFFF">
+    <!-- Top bar: suggests the "input" edge -->
+    <rect x="112" y="128" width="288" height="48" rx="16"/>
+
+    <!-- Middle chevron: the "funnel" down toward the output -->
+    <path d="M 112 240
+             L 256 336
+             L 400 240
+             L 400 304
+             L 256 400
+             L 112 304 Z"/>
+
+    <!-- Bottom point: the "output" spark -->
+    <circle cx="256" cy="432" r="28"/>
+  </g>
+</svg>

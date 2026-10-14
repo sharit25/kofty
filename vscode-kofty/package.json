@@ -1,0 +1,26 @@
+{
+    "name": "kofty-icons",
+    "displayName": "Kofty Icons",
+    "description": "Icon theme that adds the Kofty logo to .kfy files. Other files keep the default VS Code icons.",
+    "version": "0.1.0",
+    "publisher": "sharit25",
+    "license": "MIT",
+    "engines": {
+        "vscode": "^1.75.0"
+    },
+    "categories": ["Themes"],
+    "keywords": ["kofty", "icon", "theme", "kfy"],
+    "contributes": {
+        "iconThemes": [
+            {
+                "id": "kofty-icons",
+                "label": "Kofty Icons",
+                "path": "./icons/kofty-icon-theme.json"
+            }
+        ]
+    },
+    "repository": {
+        "type": "git",
+        "url": "https://github.com/sharit25/kofty"
+    }
+}

@@ -1,0 +1,11 @@
+﻿{
+    "iconDefinitions": {
+        "_kofty_kfy": {
+            "iconPath": "./kofty.svg"
+        }
+    },
+    "fileExtensions": {
+        "kfy": "_kofty_kfy",
+        "is": "_kofty_kfy"
+    }
+}
