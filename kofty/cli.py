@@ -2,6 +2,7 @@
 
 Usage:
     kofty <file.kfy> [--emit-only] [--out <path>]
+    kofty init
     kofty --version
 """
 
@@ -17,6 +18,44 @@ from .transpiler import transpile, TranspileError
 
 
 VERSION = "0.1.0"
+
+_TASKS_JSON = """\
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "Kofty: build and run",
+            "type": "shell",
+            "command": "python",
+            "args": ["-m", "kofty.cli", "${file}"],
+            "problemMatcher": [],
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "presentation": {
+                "reveal": "always",
+                "panel": "shared",
+                "clear": true,
+                "echo": true
+            }
+        }
+    ]
+}
+"""
+_SETTINGS_JSON = """\
+{
+    "files.associations": {
+        "*.kfy": "python",
+        "*.is": "python"
+    },
+    "editor.tabSize": 4,
+    "editor.insertSpaces": true,
+    "editor.detectIndentation": false,
+    "files.trimTrailingWhitespace": true,
+    "files.insertFinalNewline": true
+}
+"""
 
 # Banner for --version and --help.
 # Uses Unicode block characters that render in any modern terminal.
@@ -201,7 +240,53 @@ def _resolve_source_file(name: str) -> Path | None:
         )
     return None
 
+def _run_init() -> int:
+    """`kofty init` — write .vscode/tasks.json and .vscode/settings.json.
+
+    Sets up a VS Code build task (Ctrl+Shift+B) and file-association
+    settings so .kfy files open with Python syntax highlighting.
+    Refuses to overwrite existing files; reports each action.
+    """
+    vscode_dir = Path(".vscode")
+    tasks_file = vscode_dir / "tasks.json"
+    settings_file = vscode_dir / "settings.json"
+
+    if tasks_file.exists() and settings_file.exists():
+        print(f"[Kofty] {vscode_dir} already set up; not overwriting.")
+        print("[Kofty] Delete files and re-run `kofty init` to regenerate.")
+        return 0
+
+    vscode_dir.mkdir(exist_ok=True)
+
+    wrote_any = False
+
+    if not tasks_file.exists():
+        tasks_file.write_text(_TASKS_JSON, encoding="utf-8")
+        print(f"[Kofty] Wrote {tasks_file}")
+        wrote_any = True
+    else:
+        print(f"[Kofty] {tasks_file} already exists; skipped.")
+
+    if not settings_file.exists():
+        settings_file.write_text(_SETTINGS_JSON, encoding="utf-8")
+        print(f"[Kofty] Wrote {settings_file}")
+        wrote_any = True
+    else:
+        print(f"[Kofty] {settings_file} already exists; skipped.")
+
+    if wrote_any:
+        print(
+            "[Kofty] Open this folder in VS Code. .kfy files will "
+            "highlight as Python, and Ctrl+Shift+B builds the "
+            "currently-focused file."
+        )
+    return 0
+
 def main(argv=None) -> int:
+    if argv is None:
+        argv = sys.argv[1:]
+    if argv and argv[0] == "init":
+        return _run_init()
     parser = argparse.ArgumentParser(prog="kofty")
     parser.add_argument("file", nargs="?", help="Kofty source (.kfy)")
     parser.add_argument("--emit-only", action="store_true",
