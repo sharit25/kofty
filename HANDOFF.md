@@ -72,6 +72,11 @@ Entry point: interscript.bat -> python -m interscript.cli <file>
 
 - 465 runtime tests + 484 transpile-only tests = 949 total
 - 6 xfailed
+- Batch 10k.3 (constructor initializer list) DONE
+- Batch 10k.2 (class fields in method bodies) DONE
+- Batch 10k.1 (class-typed params in function bodies) DONE
+- `examples/vscode_demo.kfy` compiles and runs end-to-end (2026-10-14)
+- 493 transpile-only tests passing, 0 failing
 - Batch 10j (user-class parameter annotations) DONE
 - Batch 10i (user classes in f-strings) DONE
 - Batch 10h (containers in f-strings) DONE
@@ -1086,54 +1091,59 @@ pre-pass that registers class names (line ~3484).
 **Artifacts:** backup
 `InterScript-Language_backup_20261013_batch10j_user_class_params.zip`.
 
-## 33. Batch 10k scope — the three remaining demo blockers
+## 33. Batch 10k — RESOLVED (2026-10-14)
 
-All three errors come from `examples/vscode_demo.kfy` after 10j.
+All three sub-tasks completed; `examples/vscode_demo.kfy`
+compiles and runs end-to-end.
 
-### 10k.1 — Class-typed parameter access
+### 10k.1 — Class-typed parameter access ✅
+Registered class-typed params in `instance_vars` during
+`visit_FunctionDef` body emission; restored on exit.
+Files: `kofty/transpiler.py` (`visit_FunctionDef`).
+Tests: `tests/test_batch10k_transpile.py` (4 tests).
+Commit: 1a791fb.
 
-    def describe_point(p: Point):
-        if p.x == 0:                          # p.x: should work
-            print(f"  {p} is on the y-axis")  # is_to_string(p): should work
-        else:
-            print(f"  ... |p|^2 = {p.magnitude_sq}")  # p.magnitude_sq() (call!)
+### 10k.2 — Class-typed fields in method bodies ✅
+- Added `self.class_field_types: dict` to the emitter.
+- Populated it in `visit_ClassDef` from the `field_types`
+  gathered during constructor analysis.
+- Extended `_class_of_expr` to handle `self.field` reads by
+  looking up the field's type in `class_field_types`.
+Tests: 2 more tests in `tests/test_batch10k_transpile.py`.
+Commit: b69d6ad.
 
-**Current:** `p` is correctly typed `Point`, but the parameter is
-not registered in `instance_vars`, so `p.x` and `p.magnitude_sq`
-don't dispatch. `p.magnitude_sq` emits a member-function pointer.
+### 10k.3 — Constructor initializer list ✅
+Constructors now emit `: field(param), ...` for every field
+assigned directly from a constructor parameter, merged with the
+parent-initializer list from `super().__init__(...)`.
+Body assignments for those fields are filtered out.
+Files: `kofty/transpiler.py` (constructor emission).
+Tests: 3 more tests; 2 existing tests in `tests/test_transpiler.py`
+updated for the new (correct) emitted form.
+Commit: (the one you're about to make).
 
-**Fix:** in `visit_FunctionDef`, after emitting the signature,
-register each class-typed parameter in a per-function scope for
-`instance_vars`-style dispatch. Restore on exit.
+**Acceptance:** `.\run_kofty.ps1 examples\vscode_demo.kfy` builds
+and runs the full demo (`Hello, kofty!` through `Done.`).
 
-### 10k.2 — Class-typed field inside method body
+## 34. Demo-driven bug hunt: what it found
 
-    class Circle:
-        def __str__(self):
-            return f"Circle(center={self.center}, ...)"
-            # self.center is Point; should emit this->center.__str__()
+`examples/vscode_demo.kfy` was written as an end-to-end test
+program. It surfaced 9 real language gaps that unit tests missed:
 
-**Current:** emits `is_to_string(this->center)`. No overload accepts
-`Point`.
+| Batch | Gap |
+|-------|-----|
+| 10e | `math.pi` (and random/time) inside class method bodies |
+| 10f | String repetition `"=" * n` |
+| 10g | Set operations with inline set literals |
+| 10h | Containers inside f-strings |
+| 10i | User-class instances inside f-strings |
+| 10j | User-class parameter annotations were silently `int` |
+| 10k.1 | Class-typed params weren't registered in scope |
+| 10k.2 | Class-typed fields weren't tracked past `visit_ClassDef` |
+| 10k.3 | Constructor default-constructed class-typed fields |
 
-**Fix:** extend the f-string / `is_to_string` dispatch (from Batch
-10i) to recognize when the value is a class-typed field of the
-current class. `self.X` in `Circle.__str__` where `X` is typed
-`Point` → `this->X.__str__()`.
+All fixed. Demo runs. 493 transpile tests green.
 
-### 10k.3 — Constructor initializer list for class-typed fields
-
-    class Circle:
-        def __init__(self, center: Point, radius: float):
-            self.center = center
-            self.radius = radius
-
-**Current:** emits `Circle(Point center, double radius) { this->center = center; ... }`.
-`this->center` default-constructs `Point`, which has no default ctor.
-
-**Fix:** when a constructor parameter's C++ type is a user class,
-emit an initializer list:
-`Circle(Point center, double radius) : center(center), radius(radius) {}`.
-Alternative: change the parameter type to `const Point&`.
-
-**Acceptance:** `.\run_kofty.ps1 examples\vscode_demo.kfy` builds and runs.
+**Lesson:** write a real program. Tests written by the same
+author as the feature have the same blind spots. A demo that
+attempts a lot will find the gaps the tests didn't.
