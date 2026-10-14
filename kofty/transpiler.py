@@ -318,6 +318,51 @@ class CppEmitter(ast.NodeVisitor):
                 return ftype
         return None
 
+    def _is_int_expr(self, node) -> bool:
+        """True if `node` will emit as an integer-typed C++ expression.
+
+        Used by the `/` handler to decide whether to cast to double
+        (Python true division) or emit as-is.
+        """
+        if isinstance(node, ast.Constant):
+            return isinstance(node.value, int) and not isinstance(
+                node.value, bool)
+        if isinstance(node, ast.Name):
+            # Tracked int variables. `list_vars`/`dict_vars` are
+            # containers; `instance_vars` are user classes. If the
+            # name isn't tracked as any of those, or as a known
+            # float, treat it as int (matches Kofty's existing
+            # "unannotated = int-ish" convention).
+            if node.id in self.list_vars:
+                return False
+            if node.id in self.dict_vars:
+                return False
+            if node.id in self.set_vars:
+                return False
+            if node.id in self.tuple_vars:
+                return False
+            if node.id in self.instance_vars:
+                return False
+            return True
+        if isinstance(node, ast.BinOp):
+            # A BinOp produces an int if both sides are int and the
+            # operator is int-preserving (+ - * // % & | ^).
+            if isinstance(node.op, (ast.Add, ast.Sub, ast.Mult,
+                                     ast.FloorDiv, ast.Mod,
+                                     ast.BitAnd, ast.BitOr, ast.BitXor)):
+                return (self._is_int_expr(node.left)
+                        and self._is_int_expr(node.right))
+            # Division, power, etc. produce float.
+            return False
+        if isinstance(node, ast.UnaryOp):
+            # -x, +x, ~x preserve int-ness of the operand. `not` is bool.
+            if isinstance(node.op, (ast.USub, ast.UAdd, ast.Invert)):
+                return self._is_int_expr(node.operand)
+            return False
+        # Anything else (Call, Subscript, IfExp, ...) — assume not int,
+        # so we don't cast unless we're sure.
+        return False
+
     # ---- helpers ---------------------------------------------------------
     def emit(self, line: str):
         self.lines.append("    " * self.indent + line)
@@ -441,6 +486,15 @@ class CppEmitter(ast.NodeVisitor):
             # // -> floor division with correct sign handling
             if isinstance(node.op, ast.FloorDiv):
                 return f"is_floordiv({left}, {right})"
+
+            # Batch 10l: `/` is Python true division. C++ `/` on two
+            # ints truncates. Cast both sides to double when both
+            # operands are int-typed.
+            if isinstance(node.op, ast.Div):
+                if (self._is_int_expr(node.left)
+                        and self._is_int_expr(node.right)):
+                    return f"((double){left} / (double){right})"
+                return f"({left} / {right})"
 
             # String repetition: str * int  or  int * str.
             # Python: "=" * 40 -> 40 equals signs.
