@@ -853,29 +853,47 @@ class CppEmitter(ast.NodeVisitor):
                     )
             # Infer value type from first value (recursive for nested dicts).
             def _infer_dict_value_type(val_node):
-                if isinstance(val_node, ast.Constant):
-                    v = val_node.value
-                    if isinstance(v, bool): return "bool"
-                    if isinstance(v, int): return "int"
-                    if isinstance(v, float): return "double"
-                    if isinstance(v, str): return "std::string"
-                    return None
-                if isinstance(val_node, ast.UnaryOp):
-                    # -1, -2.5
-                    if isinstance(val_node.operand, ast.Constant):
-                        v = val_node.operand.value
+                    if isinstance(val_node, ast.Constant):
+                        v = val_node.value
+                        if isinstance(v, bool): return "bool"
                         if isinstance(v, int): return "int"
                         if isinstance(v, float): return "double"
+                        if isinstance(v, str): return "std::string"
+                        return None
+                    if isinstance(val_node, ast.UnaryOp):
+                        if isinstance(val_node.operand, ast.Constant):
+                            v = val_node.operand.value
+                            if isinstance(v, int): return "int"
+                            if isinstance(v, float): return "double"
+                        return None
+                    if isinstance(val_node, ast.Dict):
+                        if len(val_node.values) == 0:
+                            return None
+                        inner_t = _infer_dict_value_type(val_node.values[0])
+                        if inner_t is None:
+                            return None
+                        return f"std::map<std::string, {inner_t}>"
+                    # Batch 11c.3: dict values that are tuples.
+                    if isinstance(val_node, ast.Tuple) and len(val_node.elts) >= 2:
+                        def _scalar_cpp(n):
+                            if isinstance(n, ast.UnaryOp):
+                                n = n.operand
+                            v = n.value
+                            if isinstance(v, bool): return "bool"
+                            if isinstance(v, int): return "int"
+                            if isinstance(v, float): return "double"
+                            if isinstance(v, str): return "std::string"
+                            return None
+                        _types = []
+                        for e in val_node.elts:
+                            t = _scalar_cpp(e)
+                            if t is None:
+                                return None
+                            _types.append(t)
+                        if len(_types) == 2:
+                            return f"std::pair<{_types[0]}, {_types[1]}>"
+                        return "std::tuple<" + ", ".join(_types) + ">"
                     return None
-                if isinstance(val_node, ast.Dict):
-                    # Nested dict: recurse on first value
-                    if len(val_node.values) == 0:
-                        return None
-                    inner_t = _infer_dict_value_type(val_node.values[0])
-                    if inner_t is None:
-                        return None
-                    return f"std::map<std::string, {inner_t}>"
-                return None
 
             first_val = node.values[0]
             val_type = _infer_dict_value_type(first_val)
@@ -2289,8 +2307,28 @@ class CppEmitter(ast.NodeVisitor):
                         if inner_t is None:
                             return None
                         return f"std::map<std::string, {inner_t}>"
+                    # Batch 11c.3: dict values that are tuples.
+                    if (isinstance(val_node, ast.Tuple)
+                            and len(val_node.elts) >= 2):
+                        def _scalar_cpp(n):
+                            if isinstance(n, ast.UnaryOp):
+                                n = n.operand
+                            v = n.value
+                            if isinstance(v, bool): return "bool"
+                            if isinstance(v, int): return "int"
+                            if isinstance(v, float): return "double"
+                            if isinstance(v, str): return "std::string"
+                            return None
+                        _types = []
+                        for e in val_node.elts:
+                            t = _scalar_cpp(e)
+                            if t is None:
+                                return None
+                            _types.append(t)
+                        if len(_types) == 2:
+                            return f"std::pair<{_types[0]}, {_types[1]}>"
+                        return "std::tuple<" + ", ".join(_types) + ">"
                     return None
-
                 val_type = _infer_dict_value_type(node.value.values[0])
                 if val_type is None:
                     raise TranspileError(
@@ -2867,6 +2905,11 @@ class CppEmitter(ast.NodeVisitor):
             if len(node.target.elts) < 2:
                 raise TranspileError(
                     "Tuple-unpacking for-loops need at least 2 targets."
+                )
+            if not all(isinstance(e, ast.Name) for e in node.target.elts):
+                raise TranspileError(
+                    "Nested tuple-unpacking in for-loops is not "
+                    "supported yet."
                 )
             target_names = [e.id for e in node.target.elts]
             for tn in target_names:
