@@ -1,0 +1,52 @@
+# user_input.kfy — demo of Kofty's input() support.
+# Run: kofty examples\user_input.kfy
+#
+# Exercises:
+#   - input() with no prompt
+#   - input("prompt")
+#   - int(input())    (parse error handled by try/except)
+#   - float(input())
+#   - string concatenation with the returned line
+#   - f-string interpolation of user input
+
+print("========== Kofty user input ==========")
+print("")
+
+# ---------- 1. Simplest case ----------
+print("--- 1. input() with prompt ---")
+name = input("What is your name? ")
+print("Hello, " + name + "!")
+
+# ---------- 2. f-string with input ----------
+print("")
+print("--- 2. f-string with input ---")
+city = input("What city are you in? ")
+print(f"{name} is in {city}.")
+
+# ---------- 3. Parse integer with int(input()) ----------
+print("")
+print("--- 3. int(input()) ---")
+age_str = input("How old are you? ")
+age = int(age_str)
+print(f"In 10 years you will be {age + 10}.")
+
+# ---------- 4. Parse float with float(input()) ----------
+print("")
+print("--- 4. float(input()) ---")
+height = float(input("Your height in metres? "))
+print(f"Twice your height is {height * 2.0}m.")
+
+# ---------- 5. Parse error handling ----------
+print("")
+print("--- 5. try/except on bad input ---")
+raw = input("Enter a number (bad input will be caught): ")
+try:
+    n = int(raw)
+    print(f"Good — you entered {n}.")
+except Exception:
+    print("That wasn't a number. Caught the error.")
+
+# ---------- 6. Multi-line flow ----------
+print("")
+print("--- 6. done ---")
+print(f"Thanks for playing, {name}.")

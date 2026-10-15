@@ -2169,10 +2169,15 @@ class CppEmitter(ast.NodeVisitor):
                 raise TranspileError(
                     f"int() takes exactly 1 argument, got {len(args)}"
                 )
-            # Batch 12: int(input(...)) parses via std::stoi.
+            # Batch 15: parse std::string via std::stoi.
+            # Cases that produce a string: input() call, a Name
+            # (variable holding user input). Numeric literals and
+            # arithmetic expressions keep the C-style cast.
             if (isinstance(node.args[0], ast.Call)
                     and isinstance(node.args[0].func, ast.Name)
                     and node.args[0].func.id == "input"):
+                return f"std::stoi({args[0]})"
+            if isinstance(node.args[0], ast.Name):
                 return f"std::stoi({args[0]})"
             return f"(int){args[0]}"
         # Special case: float(x) → C-style cast to double
@@ -2181,10 +2186,12 @@ class CppEmitter(ast.NodeVisitor):
                 raise TranspileError(
                     f"float() takes exactly 1 argument, got {len(args)}"
                 )
-            # Batch 12: float(input(...)) parses via std::stod.
+            # Batch 15: parse std::string via std::stod.
             if (isinstance(node.args[0], ast.Call)
                     and isinstance(node.args[0].func, ast.Name)
                     and node.args[0].func.id == "input"):
+                return f"std::stod({args[0]})"
+            if isinstance(node.args[0], ast.Name):
                 return f"std::stod({args[0]})"
             return f"(double){args[0]}"
 
