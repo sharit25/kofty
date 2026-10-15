@@ -1,0 +1,18 @@
+# ---------- 13. match / case ----------
+print("")
+print("--- match/case ---")
+def describe_num(n):
+    match n:
+        case 1:
+            return "one"
+        case 2:
+            return "two"
+        case 3:
+            return "three"
+        case _:
+            return "many"
+
+print(describe_num(1))
+print(describe_num(2))
+print(describe_num(3))
+print(describe_num(99))
