@@ -4054,9 +4054,93 @@ def _scan_ctor_arg_types(tree, user_classes):
     # Drop any positions that ended up None due to conflict.
     for cls, per_class in result.items():
         result[cls] = {k: v for k, v in per_class.items() if v is not None}
+
+    # -----------------------------------------------------------------
+    # Batch 13c (Bug #10): pass 2 — super().__init__(...) call sites.
+    #
+    # A base class's ctor params are often typed only via a derived
+    # class calling super().__init__(name), never via a direct
+    # BaseClass(...) call. Pass 1 doesn't see those because
+    # node.func is an ast.Attribute, not an ast.Name.
+    #
+    # Strategy: walk each ClassDef. When we find a
+    # super().__init__(...) call, look at each positional arg:
+    #   - literal             -> its C++ type
+    #   - Name matching one of the ENCLOSING class's ctor params
+    #                         -> the enclosing class's inferred type
+    #                            at that param position
+    # Attribute the resulting per-position type to the PARENT class
+    # (first base of the enclosing class), with the same conflict
+    # logic as pass 1.
+    # -----------------------------------------------------------------
+
+    # { class_name: [base_name, ...] }
+    _bases_map = {}
+    # { class_name: { param_name: param_index_within_ctor } }
+    _param_index = {}
+    for node in tree.body:
+        if not isinstance(node, ast.ClassDef):
+            continue
+        _bases_map[node.name] = [
+            b.id for b in node.bases if isinstance(b, ast.Name)
+        ]
+        for item in node.body:
+            if isinstance(item, ast.FunctionDef) and item.name == "__init__":
+                arg_names = [a.arg for a in item.args.args]
+                # arg_names[1:] drops `self`, so enumerate() already
+                # starts at 0 for the first real parameter. No -1.
+                _param_index[node.name] = {
+                    name: i for i, name in enumerate(arg_names[1:])
+                }
+                break
+
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.ClassDef):
+            continue
+        bases = _bases_map.get(node.name, [])
+        if not bases:
+            continue
+        parent = bases[0]
+        if parent not in user_classes:
+            continue
+        pidx = _param_index.get(node.name, {})
+        child_types = result.get(node.name, {})
+
+        for item in ast.walk(node):
+            if not isinstance(item, ast.Call):
+                continue
+            f = item.func
+            if not (isinstance(f, ast.Attribute) and f.attr == "__init__"):
+                continue
+            v = f.value
+            if not (isinstance(v, ast.Call)
+                    and isinstance(v.func, ast.Name)
+                    and v.func.id == "super"):
+                continue
+
+            # We are inside `super().__init__(...)` within node.name.
+            _seen_classes.add(parent)
+            per_parent = result.setdefault(parent, {})
+            for i, arg in enumerate(item.args):
+                t = _literal_cpp_type(arg)
+                if t is None and isinstance(arg, ast.Name):
+                    if arg.id in pidx:
+                        t = child_types.get(pidx[arg.id])
+                if t is None:
+                    continue
+                if i in per_parent:
+                    if per_parent[i] != t:
+                        per_parent[i] = None
+                else:
+                    per_parent[i] = t
+
+    # Re-drop None positions added by pass 2.
+    for cls, per_class in result.items():
+        result[cls] = {k: v for k, v in per_class.items() if v is not None}
+
     # Batch 13h.1: ensure every seen class is present as a key,
-    # even if it has no recorded positions. This lets visit_ClassDef
-    # distinguish "no call site" from "called but no literal args".
+    # even if it has no recorded positions. Runs again after pass 2
+    # so parents discovered only via super().__init__ are included.
     for cls in _seen_classes:
         result.setdefault(cls, {})
     return result
