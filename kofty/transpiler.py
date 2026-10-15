@@ -301,6 +301,17 @@ class CppEmitter(ast.NodeVisitor):
            and node.value.id in self.list_vars \
            and isinstance(node.slice, ast.Slice):
             return "list"
+        # Batch 13b.1: source-level calls that return containers.
+        # We match on the *source* name — the AST for "a,b,c".split(",")
+        # has func=ast.Attribute(attr="split"), not func=ast.Name.
+        if isinstance(node, ast.Call):
+            if isinstance(node.func, ast.Attribute):
+                if node.func.attr == "split":
+                    return "list"
+            if isinstance(node.func, ast.Name):
+                # str.split as a free call is unusual but harmless to allow.
+                if node.func.id == "split":
+                    return "list"
         return None
 
     def _container_repr(self, node, emitted: str):
