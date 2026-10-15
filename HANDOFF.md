@@ -2180,3 +2180,30 @@ Ask them for:
 
 Then file it as a bug against this project. The pattern is:
 minimal reproduction → red-phase test → fix → verify.
+
+## 55. Input fixes (2026-10-15)
+
+The `examples/user_input.kfy` demo surfaced a bug in `int(x)` /
+`float(x)`: only direct `int(input(...))` was parsed correctly;
+`int(s)` where `s` is a `std::string` variable emitted a C-style
+cast that C++ rejects.
+
+Fix: any Name argument to `int`/`float` routes through
+`std::stoi` / `std::stod`. Numeric-literal arguments keep the
+C-style cast.
+
+**Tradeoff:** `int(x)` where `x` is an `int` variable now emits
+`std::stoi(x)`, which won't compile. Numeric variables shouldn't
+be wrapped in `int()` anyway. Full type-aware dispatch waits for
+variable type tracking (deferred).
+
+Test file: `tests/test_batch15_transpile.py`, 6 tests.
+Commit: `4e01436`.
+
+- **Unknown names pass through to C++.** A bare `pi` (when not
+  defined) emits as C++ identifier `pi` and fails at g++
+  compile time with a confusing "not declared in this scope"
+  error. Kofty should raise a `TranspileError` at transpile
+  time with a suggestion (e.g. "did you mean math.pi?").
+  Needs a pass tracking all declared names + builtins +
+  imported constants. Medium.

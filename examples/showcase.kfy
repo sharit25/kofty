@@ -1,5 +1,6 @@
 # showcase.kfy — full tour of the Kofty language.
 # Runs end-to-end. See BUGS.md for what's intentionally omitted.
+import math
 
 print("========== Kofty showcase ==========")
 print("")
@@ -65,7 +66,7 @@ age = 36
 print(f"Hi {name}, age {age}")
 print(f"2 + 2 = {2 + 2}")
 print(f"upper: {name.upper()}")
-print(f"pi approx {pi:.2f}")
+print(f"pi approx {math.pi:.2f}")
 print(f"padded {42:05d}")
 print(f"right {7:>5}")
 print(f"left {7:<5}")
