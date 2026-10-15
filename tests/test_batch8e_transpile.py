@@ -132,7 +132,7 @@ print(Calc.add(3, 4))
     assert "static auto make_default" in out
     assert "static auto add" in out
     # `twice` is a normal method, not static.
-    assert "auto twice" in out
+    assert "int twice" in out
 
 
 # ===========================================================================

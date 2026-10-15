@@ -1392,6 +1392,117 @@ class CppEmitter(ast.NodeVisitor):
             return "auto", ""
         return "void", "virtual "
 
+    # -----------------------------------------------------------------
+    # Batch 13d.2: infer a concrete return type for methods that have
+    # no annotation but a `return <expr>` body. Used only for base-class
+    # methods, since `virtual auto` is invalid C++.
+    # -----------------------------------------------------------------
+
+    def _infer_method_return_type(self, method: ast.FunctionDef):
+        """Infer a concrete C++ return type for an unannotated method.
+
+        Returns a C++ type string, or None if the return type cannot
+        be determined consistently. Only inspects `return <expr>`
+        statements; `return` with no value is treated as void.
+        """
+        seen = set()
+        for stmt in ast.walk(method):
+            if not isinstance(stmt, ast.Return):
+                continue
+            if stmt.value is None:
+                seen.add("void")
+                continue
+            t = self._infer_expr_type(stmt.value)
+            if t is None:
+                return None
+            seen.add(t)
+        # No return statements at all -> caller treats has_return=False.
+        if not seen:
+            return None
+        if len(seen) != 1:
+            # Mixed return types -> can't unify. Give up.
+            return None
+        return seen.pop()
+
+    def _infer_expr_type(self, node: ast.AST):
+        """Conservative C++ type inference for a single expression.
+
+        Returns a C++ type string, or None if the type cannot be
+        determined. Does NOT recurse into user-function return types
+        (avoids infinite loops) — only inspects annotations.
+        """
+        # Literals
+        if isinstance(node, ast.Constant):
+            v = node.value
+            if isinstance(v, bool):
+                return "bool"
+            if isinstance(v, int):
+                return "int"
+            if isinstance(v, float):
+                return "double"
+            if isinstance(v, str):
+                return "std::string"
+            if v is None:
+                return "void"
+            return None
+        # vec2(x, y) -> std::pair<double, double>
+        if (isinstance(node, ast.Call)
+                and isinstance(node.func, ast.Name)
+                and node.func.id == "vec2"):
+            return "std::pair<double, double>"
+        # List literal
+        if isinstance(node, ast.List):
+            if len(node.elts) == 0:
+                return None
+            has_str = any(isinstance(e, ast.Constant)
+                          and isinstance(e.value, str) for e in node.elts)
+            has_float = any(isinstance(e, ast.Constant)
+                            and isinstance(e.value, float) for e in node.elts)
+            if has_str:
+                return "std::vector<std::string>"
+            if has_float:
+                return "std::vector<double>"
+            return "std::vector<int>"
+        # Tuple literal -> pair (2-element) or tuple (3+)
+        if isinstance(node, ast.Tuple):
+            elts = [self._infer_expr_type(e) for e in node.elts]
+            if len(elts) < 2 or any(t is None for t in elts):
+                return None
+            if len(elts) == 2:
+                return f"std::pair<{elts[0]}, {elts[1]}>"
+            return f"std::tuple<{', '.join(elts)}>"
+        # self.<field> read
+        if (isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and node.value.id == "self"
+                and self.current_class is not None):
+            field_types = self.class_field_types.get(self.current_class, {})
+            if node.attr in field_types:
+                return field_types[node.attr]
+            return None
+        # BinOp — addition / subtraction / multiplication / division
+        if isinstance(node, ast.BinOp):
+            lt = self._infer_expr_type(node.left)
+            rt = self._infer_expr_type(node.right)
+            if isinstance(node.op, ast.Add):
+                # str + anything -> str
+                if lt == "std::string" or rt == "std::string":
+                    return "std::string"
+            if lt is None or rt is None:
+                return None
+            # Arithmetic on numbers
+            numeric = {"int", "double", "float"}
+            if lt in numeric and rt in numeric:
+                if lt == "double" or rt == "double":
+                    return "double"
+                if lt == "float" or rt == "float":
+                    return "double"  # Kofty treats float as double
+                return "int"
+            return None
+        # Name — only infer if it's a known constant-ish var. Conservative:
+        # we don't track variable types at method-emission time, so skip.
+        return None
+
     def _is_string_expr(self, node: ast.AST) -> bool:
         """Return True if the expression is known to produce a string."""
         # String literal
@@ -3885,6 +3996,22 @@ class CppEmitter(ast.NodeVisitor):
             method_args_cpp = ", ".join(f"int {a}" for a in method_args)
 
             ret_type, virtual_kw = self._method_return_type(method, has_return)
+            # Batch 13d.3: infer a concrete return type for any
+            # unannotated method with a `return <expr>` body. This
+            # serves two purposes:
+            #   1. Base-class methods that are otherwise `auto` can be
+            #      made `virtual` (C++ forbids `virtual auto`).
+            #   2. Child methods that override a parent method must
+            #      match the parent's concrete return type (C++ rejects
+            #      "conflicting return type" otherwise).
+            if has_return and not virtual_kw:
+                inferred = self._infer_method_return_type(method)
+                if inferred is not None:
+                    ret_type = inferred
+                    if is_base_class:
+                        virtual_kw = "virtual "
+            # Emit `override` whenever we're overriding a parent method.
+            # The parent method is virtual by construction (Batch 13d.1).
             override_kw = " override" if method.name in parent_methods else ""
 
             lines.append("")

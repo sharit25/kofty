@@ -376,7 +376,7 @@ def test_method_return_int():
         "        return self.x\n"
     )
     # Should emit `auto get_x()` not `void get_x()`
-    assert "auto get_x()" in out
+    assert "int get_x()" in out
 
 
 def test_method_return_expression():
@@ -1182,7 +1182,7 @@ def test_method_no_return_annotation_still_auto():
         "    def get(self):\n"
         "        return self.value\n"
     )
-    assert "auto get()" in out
+    assert "int get()" in out
     assert "virtual auto" not in out
 
 def test_method_void_still_virtual():
