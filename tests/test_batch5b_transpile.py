@@ -29,15 +29,14 @@ print(sum_all({1, 2, 3}))
 
 
 def test_args_empty_emits_vector_and_size():
-    out = transpile("""
-def count_all(*nums):
-    return len(nums)
+    """Batch 5b / 13d: empty *args call must pass an empty vector."""
+    out = transpile('''
+def show(*xs):
+    return len(xs)
 
-print(count_all({}))
-""")
-    assert "std::vector<int>" in out
-    assert ".size()" in out
-
+n = show()
+''')
+    assert "show(std::vector<int>{})" in out or "show({})" in out
 
 def test_args_len_emits_vector_size():
     out = transpile("""
@@ -69,15 +68,15 @@ print(join_all({"a", "b", "c"}))
 
 
 def test_args_str_annotation_empty_emits_vector_string():
-    out = transpile("""
-def join_all(*words: str):
+    """Batch 5b / 13d: empty *args call with str element type."""
+    out = transpile('''
+def show(*words: str):
     return len(words)
 
-print(join_all({}))
-""")
-    assert "std::vector<std::string>" in out
-    assert ".size()" in out
-
+n = show()
+''')
+    assert "show(std::vector<std::string>{})" in out or \
+           "show({})" in out
 
 # ===========================================================================
 # *args body behaves like a list

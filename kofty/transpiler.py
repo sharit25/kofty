@@ -110,6 +110,11 @@ class CppEmitter(ast.NodeVisitor):
         # Batch 5b: name -> C++ element type of a *args variadic param.
         # Presence in this dict means the function has a *args param.
         self.func_varargs: dict = {}
+        # Batch 13d: how many leading positional params precede
+        # the *args vararg. Used at call sites to know how many
+        # leading args stay positional and how many go into the
+        # wrapped vector.
+        self.func_vararg_leading: dict = {}
         # Batch 5c: name -> C++ value type of a **kwargs variadic param.
         # Presence in this dict means the function has a **kwargs param.
         self.func_kwargs: dict = {}
@@ -1894,22 +1899,21 @@ class CppEmitter(ast.NodeVisitor):
                     )
                 else:
                     args.append(self.expr(a))
-        elif name in self.func_varargs and node.args:
+        elif name in self.func_varargs:
+            # Batch 13d: wrap all trailing positional args into a single
+            # std::vector<T>{...} at the call site. Leading args (before
+            # the vararg) stay positional.
             elem_type = self.func_varargs[name]
-            args = []
-            last_i = len(node.args) - 1
-            for i, a in enumerate(node.args):
-                is_last = (i == last_i)
-                if is_last and isinstance(a, ast.Set):
-                    inner = [self.expr(e) for e in a.elts]
-                    args.append(
-                        f"std::vector<{elem_type}>{{{', '.join(inner)}}}"
-                    )
-                elif (is_last and isinstance(a, ast.Dict)
-                        and len(a.keys) == 0):
-                    args.append(f"std::vector<{elem_type}>{{}}")
-                else:
-                    args.append(self.expr(a))
+            leading = self.func_vararg_leading.get(name, 0)
+            leading_cpp = [self.expr(a) for a in node.args[:leading]]
+            rest_cpp = [self.expr(a) for a in node.args[leading:]]
+            if rest_cpp:
+                vec_cpp = (
+                    f"std::vector<{elem_type}>{{{', '.join(rest_cpp)}}}"
+                )
+            else:
+                vec_cpp = f"std::vector<{elem_type}>{{}}"
+            args = leading_cpp + [vec_cpp]
         else:
             args = [self.expr(a) for a in node.args]
 
@@ -3228,6 +3232,9 @@ class CppEmitter(ast.NodeVisitor):
                 f"std::vector<{elem_type}> {va.arg}"
             )
             self.func_varargs[node.name] = elem_type
+            # Batch 13d: how many leading positional params precede
+            # the *args vararg (so the call site can split args).
+            self.func_vararg_leading[node.name] = len(node.args.args)
             # Mark the vararg name as a list so nums[0], len(nums),
             # `x in nums`, and `for n in nums` all use list code paths.
             self.list_vars[va.arg] = elem_type
