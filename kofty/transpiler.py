@@ -146,6 +146,7 @@ class CppEmitter(ast.NodeVisitor):
         # Batch 11a: name -> literal string captured at assignment time.
         # Used by .format() on a variable receiver.
         self.str_literal_vars: dict = {}
+        self.string_vars: set = set()   # Batch 15: names assigned from input() or str literals
         # Batch 11b: name -> tuple arity returned by a function.
         # Populated in visit_FunctionDef; consumed in visit_Assign.
         self.func_return_arity: dict = {}
@@ -2177,7 +2178,8 @@ class CppEmitter(ast.NodeVisitor):
                     and isinstance(node.args[0].func, ast.Name)
                     and node.args[0].func.id == "input"):
                 return f"std::stoi({args[0]})"
-            if isinstance(node.args[0], ast.Name):
+            if (isinstance(node.args[0], ast.Name)
+                    and node.args[0].id in self.string_vars):
                 return f"std::stoi({args[0]})"
             return f"(int){args[0]}"
         # Special case: float(x) → C-style cast to double
@@ -2191,7 +2193,8 @@ class CppEmitter(ast.NodeVisitor):
                     and isinstance(node.args[0].func, ast.Name)
                     and node.args[0].func.id == "input"):
                 return f"std::stod({args[0]})"
-            if isinstance(node.args[0], ast.Name):
+            if (isinstance(node.args[0], ast.Name)
+                    and node.args[0].id in self.string_vars):
                 return f"std::stod({args[0]})"
             return f"(double){args[0]}"
 
@@ -2572,6 +2575,12 @@ class CppEmitter(ast.NodeVisitor):
 
             # Normal variable assignment
             value = self.expr(node.value)
+            # Batch 15: track variables that hold strings, so int()/
+            # float() know whether to parse (std::stoi/stod) or cast.
+            if isinstance(node.value, ast.Call) and isinstance(node.value.func, ast.Name) and node.value.func.id == "input":
+                self.string_vars.add(name)
+            elif isinstance(node.value, ast.Constant) and isinstance(node.value.value, str):
+                self.string_vars.add(name)
             # If this is a fresh variable initialized with a raw string
             # literal, wrap it in std::string(...) so future assignments
             # of other strings don't fail (C++ won't assign std::string
