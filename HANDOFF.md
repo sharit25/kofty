@@ -1916,3 +1916,267 @@ new (correct) emitted forms — `auto get_x()` → `int get_x()`,
 
 ### Commits (pushed to origin/main)
 
+## 53. Session addendum — Batches 13a–14 + C++20 + showcase (2026-10-15)
+
+Continuation of §52. The "showcase runs end-to-end" milestone was
+reached, then hardened.
+
+### Final state at end of session
+
+- **`check.py`: 81 Python files parse cleanly**
+- **Full transpile suite: 640 passing, 0 failing**
+- **`tests/test_showcase.py`: 9 passing** (regression guard)
+- **`examples/showcase.kfy`: compiles and runs cleanly, zero warnings**
+- Compile flag: **`-std=c++20`** (was `-std=c++17`)
+- Working tree clean, all commits pushed to `origin/main`
+
+### Batches after §52
+
+| Batch | What | Commit |
+|-------|------|--------|
+| 13b.1 | `_container_kind` recognizes `str.split()` (AST Attribute, not Name) | `80d66b2` |
+| 13c | Base ctor param inference from `super().__init__()` | `63bb9c9` |
+| 13d.1-3 | `virtual` on base-class methods; infer return types; emit `override` | `61f0ad3` |
+| — | HANDOFF/ROADMAP + add `showcase.kfy` | `652694b` |
+| — | HANDOFF §52 | `72f8f0d` |
+| — | Bump `-std=c++17` → `-std=c++20` | `b59d2c6` |
+| — | Add set-algebra section to showcase; add showcase regression test | `2d49249` |
+| 14 | Same-type set-literal rebind (no second `auto`) | `36da794` |
+
+### The C++20 flag change
+
+`kofty/cli.py` line 165: `"-std=c++17"` → `"-std=c++20"`.
+Reason: unannotated function params emit as C++20 abbreviated
+templates (`auto x`), which g++ flags as an extension under
+`-std=c++17`. C++20 is a strict superset for everything Kofty
+emits. Kills the 7 `-Wc++20-extensions` warnings in the showcase
+build.
+
+**Minimum g++ version:** C++20 needs GCC 10+. The machine is on
+**g++ 16.2.0** (msys64/ucrt64), well past that. If a future
+contributor has g++ < 10, they need to upgrade.
+
+### Showcase regression test — `tests/test_showcase.py`
+
+Nine transpile-only tests that assert on the *emitted C++* for
+each feature the showcase exercises. Does **not** launch the
+compiled `.exe` (WDAC / WinError 4551 would flake on this machine).
+Catches any regression to:
+- container repr wrapping (10a, 13b, 13b.1)
+- set-algebra wrapping (13b)
+- string-split wrapping (13b.1)
+- base-class virtual + child override (13d.1-3)
+- base ctor inference from `super().__init__` (13c)
+- preamble ordering (13a)
+- f-string format specs (9a, 9b)
+
+### Batch 14 — same-type rebind
+
+Fix: the set-literal branch in `visit_Assign` was emitting
+`auto {name} = ...;` unconditionally. Changed to the `if name in
+self.declared:` pattern that the vec2, list, and generic paths
+already use.
+
+**Not in scope for Batch 14:** type-change detection (`x = 1`
+then `x = "hello"`). That's a separate feature. Two tests marked
+`xfail` were removed rather than committed. If you want it,
+next batch.
+
+### Lessons this session (accumulated)
+
+1. **A fix that runs but doesn't fire is worse than no fix.**
+   Three separate batches applied cleanly, ran the tests, and
+   produced no output change because the code branch never
+   matched. Always verify the *emitted C++*, not just the test
+   outcome. One-liner:
+   ```
+   @'
+   from kofty.transpiler import transpile
+   out = transpile("<your test case>")
+   print(out.split("int main()")[1])
+   '@ | python -
+   ```
+
+2. **When a fix involves an index, assert the index's *effect*.**
+   Batch 13c had an off-by-one in `_param_index` that would have
+   been caught instantly by `assert "Animal(std::string name)"
+   in out` instead of `assert "std::string name" in out`.
+
+3. **`_container_kind` inspects the AST, not the emitted C++.**
+   Match on `node.func.attr == "split"`, not the helper name
+   `"str_split"`.
+
+4. **`virtual` and `auto` are incompatible.** Any base-class
+   method that could be overridden needs a concrete return type.
+   13d.2/13d.3 are the return-type inference that makes 13d.1
+   legal.
+
+5. **The showcase is the acceptance test.** Six of this session's
+   eight fixes came from running `kofty examples/showcase.kfy`
+   and chasing the first g++ error. Extending the showcase is the
+   highest-leverage way to find bugs.
+
+6. **Test assertions on emitted C++ must scope to `main()`.** The
+   preamble defines every helper, so `assert "repr_vector" in out`
+   always passes. Scope to `out.split("int main()")[1]`.
+
+7. **Push protection is real.** A GitHub PAT embedded in a text
+   file blocks the push. Rotate, remove, amend, re-push.
+
+8. **`visit_Assign` is 300 lines with 8+ parallel branches.** For
+   this function, read the exact target code first, make ONE edit,
+   verify. Avoid scripts and multi-site replaces — they match the
+   wrong place too easily.
+
+### What to do next session (priority order)
+
+1. **Package for testing / publish** — see §54 for the shipping
+   flow. Simplest path: `python -m build && pip install dist/*.whl`.
+   Test on a fresh machine before `twine upload`.
+2. **Type-change detection** (Bug #5 full) — raise a
+   `TranspileError` on `x = 1` then `x = "hello"`. Needs a
+   `self.var_types` dict and inference at every assignment. Medium.
+3. **Bug #3 — loop variable scoping.** `declared` needs
+   current-scope vs any-scope split. Small but tricky.
+4. **Bug #6 — list methods on function parameters.** Needs
+   annotation-based list typing. Small.
+5. **GitHub Actions CI.** `python check.py && pytest tests/ -k
+   transpile`. Simple workflow.
+6. **Extend the showcase** with classes/inheritance/properties,
+   match/case, try/except, math/random/time, lambdas, *args.
+   Every section added is a future bug caught early.
+
+   ## 54. Shipping Kofty — packaging and distribution (2026-10-15)
+
+### Quick state of packaging
+
+- **PyPI name reserved:** `kofty` (not yet published).
+- **`pyproject.toml`:** PEP 621 metadata, MIT license,
+  `kofty = "kofty.cli:main"` entry point. Verified with
+  `pip install -e .` in a fresh venv.
+- **GitHub:** https://github.com/sharit25/kofty
+- **Test file shipped:** `examples/console_hello.kfy` and
+  `examples/showcase.kfy` (now the full acceptance test).
+
+### To ship a wheel for testing (private beta)
+
+From the repo root, in a clean state (`git status` shows nothing
+modified):
+
+```powershell
+python -m pip install --upgrade build twine
+python -m build
+```
+
+Outputs two files in `dist/`:
+- `kofty-<version>-py3-none-any.whl` (the wheel)
+- `kofty-<version>.tar.gz` (source distribution)
+
+**Send to a tester:**
+
+The `.whl` file alone is enough. The tester runs:
+```powershell
+python -m pip install kofty-0.1.0-py3-none-any.whl
+kofty --help
+```
+
+**Requirements for the tester's machine:**
+- Python 3.10+
+- **g++ with C++20 support (GCC 10+ or Clang 16+)** on PATH
+- Windows: `windres` on PATH for icon embedding (optional —
+  skipped gracefully if missing)
+- MSYS2/ucrt64 or MinGW-w64 on Windows is the tested setup
+
+**If g++ is missing or too old, Kofty fails at compile time with
+a clear g++ error.** No `pip install` failure. Document this in
+the tester email.
+
+### To publish on PyPI (public)
+
+Once you're confident in the wheel:
+
+```powershell
+# 1. Test install the wheel in a fresh venv FIRST
+python -m venv .testvenv
+.testvenv\Scripts\activate
+pip install dist\kofty-0.1.0-py3-none-any.whl
+kofty examples\showcase.kfy
+deactivate
+Remove-Item -Recurse .testvenv
+
+# 2. Test on TestPyPI before the real thing
+python -m twine upload --repository testpypi dist/*
+# then: pip install --index-url https://test.pypi.org/simple/ kofty
+
+# 3. Real PyPI upload
+python -m twine upload dist/*
+```
+
+Requires a PyPI API token in `~/.pypirc` or entered at the prompt.
+**Never commit the token.**
+
+### What a user sees after `pip install kofty`
+
+```
+$ kofty --help
+usage: kofty [-h] [--emit-only] [--icon ICON] file
+
+Kofty compiler — .kfy to native executable
+
+$ kofty hello.kfy
+[Kofty] Wrote build\hello.cpp
+[Kofty] (console) g++ build\hello.cpp -o build\hello.exe -std=c++20
+[Kofty] Launching build\hello.exe
+Hello, world!
+```
+
+### Test checklist before shipping
+
+Run through this on a fresh venv or a second machine:
+
+- [ ] `pip install kofty-0.1.0-py3-none-any.whl` succeeds
+- [ ] `kofty --help` shows usage
+- [ ] `kofty init` writes `.vscode/tasks.json` and
+      `.vscode/settings.json`
+- [ ] `kofty hello.kfy` builds and runs a hello-world program
+- [ ] `kofty examples\showcase.kfy` runs end-to-end
+- [ ] `kofty examples\user_input.kfy` reads and echoes a line
+- [ ] Unicode (UTF-8 with BOM) source files work (Batch 10l.1)
+- [ ] `kofty <file>` finds files in subdirectories (Batch 10m)
+- [ ] Calling `kofty` on a file with a C++ keyword as an
+      identifier raises a clear `TranspileError`
+
+### User input — example for testing
+
+Kofty supports `input()` and `input("prompt: ")`. See
+`examples/user_input.kfy` (created alongside this section) for a
+runnable demo. `input()` returns `std::string`; use
+`int(input())` or `float(input())` to parse.
+
+**Known behaviour:**
+- `input()` reads one line from stdin, no trailing newline.
+- `input("prompt")` prints the prompt first, no trailing newline.
+- `int(input())` parses via `std::stoi` — throws on non-numeric
+  input, matching Python's `ValueError`.
+- `try/except` (catch-all) catches the parse error.
+
+### If the tester reports "g++ not found"
+
+The tester needs a C++20 compiler. Install:
+- **Windows:** MSYS2 (ucrt64 toolchain) or MinGW-w64.
+  https://www.msys2.org/ — `pacman -S mingw-w64-ucrt-x86_64-gcc`
+- **Linux:** `apt install g++` (Ubuntu 22.04+ has GCC 11).
+- **macOS:** `xcode-select --install` (Clang 14+ works).
+
+Verify: `g++ --version` should show version ≥ 10 (GCC) or ≥ 16
+(Clang).
+
+### If the tester reports a different bug
+
+Ask them for:
+1. The `.kfy` source file (small, anonymized is fine).
+2. The exact `kofty` command they ran.
+3. The full output including any g++ errors.
+
+Then file it as a bug against this project. The pattern is:
+minimal reproduction → red-phase test → fix → verify.
