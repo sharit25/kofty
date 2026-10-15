@@ -3427,17 +3427,24 @@ class CppEmitter(ast.NodeVisitor):
                 if _param_index in _ctor_hint:
                     param_types[arg.arg] = _ctor_hint[_param_index]
 
-        # Batch 13h: any param still None can't be inferred. Raise
-        # a clear error rather than emit broken C++.
+        # Batch 13h / 13h.1: raise only if the class is actually
+        # called somewhere and we still can't infer a param type.
+        # Dead classes (no call site) default to int, matching
+        # pre-13h behavior — a class that's never instantiated can't
+        # produce a broken call site.
+        _has_call_site = class_name in self.class_ctor_arg_types
         for arg in init_method.args.args:
             if arg.arg == "self":
                 continue
             if param_types[arg.arg] is None:
-                raise TranspileError(
-                    f"cannot infer type of parameter '{arg.arg}' in "
-                    f"{class_name}.__init__. Add a type annotation, e.g. "
-                    f"`def __init__(self, {arg.arg}: str):`."
-                )
+                if _has_call_site:
+                    raise TranspileError(
+                        f"cannot infer type of parameter '{arg.arg}' in "
+                        f"{class_name}.__init__. Add a type annotation, e.g. "
+                        f"`def __init__(self, {arg.arg}: str):`."
+                    )
+                # Dead class: fall back to int (old behavior).
+                param_types[arg.arg] = "int"
 
         # Collect field names and types from the stripped init_body
         field_types: dict = {}
@@ -3958,6 +3965,7 @@ def _scan_ctor_arg_types(tree, user_classes):
     Returns { class_name: { param_index: cpp_type } }.
     """
     result = {}
+    _seen_classes = set()
     for node in ast.walk(tree):
         if not isinstance(node, ast.Call):
             continue
@@ -3966,6 +3974,7 @@ def _scan_ctor_arg_types(tree, user_classes):
         cls = node.func.id
         if cls not in user_classes:
             continue
+        _seen_classes.add(cls)
         per_class = result.setdefault(cls, {})
         for i, arg in enumerate(node.args):
             t = _literal_cpp_type(arg)
@@ -3982,6 +3991,11 @@ def _scan_ctor_arg_types(tree, user_classes):
     # Drop any positions that ended up None due to conflict.
     for cls, per_class in result.items():
         result[cls] = {k: v for k, v in per_class.items() if v is not None}
+    # Batch 13h.1: ensure every seen class is present as a key,
+    # even if it has no recorded positions. This lets visit_ClassDef
+    # distinguish "no call site" from "called but no literal args".
+    for cls in _seen_classes:
+        result.setdefault(cls, {})
     return result
 
 

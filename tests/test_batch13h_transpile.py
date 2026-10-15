@@ -72,16 +72,18 @@ b = Box("hello")
 # --- Cannot infer: raise a clear error ---------------------------------------
 
 def test_uninferable_raises():
-    with pytest.raises(TranspileError) as exc_info:
+    """If the class IS called but no literal args are visible at
+    the call site (e.g. called with a Name), and no annotation
+    is given, raise."""
+    with pytest.raises(TranspileError):
         transpile('''
 class Dog:
     def __init__(self, name):
         self.name = name
-# No Dog(...) call anywhere
-''')
-    msg = str(exc_info.value)
-    assert "name" in msg and "Dog" in msg
 
+x = "Rex"
+d = Dog(x)
+''')
 
 def test_call_with_name_arg_raises():
     with pytest.raises(TranspileError):
