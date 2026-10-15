@@ -438,6 +438,21 @@ for nm in names:
     else:
         print(f"{nm}: not found")
 
+#--------------set new --------------------------------
+
+# ---------- sets ----------
+print("")
+print("--- sets ---")
+u1 = {1, 2, 3, 4}
+u2 = {3, 4, 5, 6}
+print(u1 | u2)
+print(u1 & u2)
+print(u1 - u2)
+print(u1 ^ u2)
+print(u1)
+print(len(u1))
+print(3 in u1)
+
 # ---------- 18. Composed: bank account ----------
 print("")
 print("--- bank account ---")
