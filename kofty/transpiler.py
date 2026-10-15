@@ -262,11 +262,53 @@ class CppEmitter(ast.NodeVisitor):
             f".Ns, x, X, o, b, ','."
         )
 
+    def _container_kind(self, node):
+        """Batch 13b: return 'list' | 'set' | 'dict' | 'tuple' | None.
+
+        Like _container_repr but reports the kind without emitting
+        code, so callers can decide whether to wrap a subexpression.
+        Recurses through BinOp (list + list, set algebra) and
+        Subscript-with-Slice over a tracked list.
+        """
+        if isinstance(node, ast.List):
+            return "list"
+        if isinstance(node, ast.Dict):
+            return "dict"
+        if isinstance(node, ast.Set):
+            return "set"
+        if isinstance(node, ast.Tuple):
+            return "tuple"
+        if isinstance(node, ast.Name):
+            if node.id in self.list_vars:
+                return "list"
+            if node.id in self.dict_vars:
+                return "dict"
+            if node.id in self.set_vars:
+                return "set"
+            if node.id in self.tuple_vars:
+                return "tuple"
+        if isinstance(node, ast.BinOp):
+            lk = self._container_kind(node.left)
+            rk = self._container_kind(node.right)
+            if isinstance(node.op, ast.Add) and lk == "list" and rk == "list":
+                return "list"
+            if isinstance(node.op,
+                          (ast.BitOr, ast.BitAnd, ast.Sub, ast.BitXor)) \
+               and lk == "set" and rk == "set":
+                return "set"
+        if isinstance(node, ast.Subscript) \
+           and isinstance(node.value, ast.Name) \
+           and node.value.id in self.list_vars \
+           and isinstance(node.slice, ast.Slice):
+            return "list"
+        return None
+
     def _container_repr(self, node, emitted: str):
         """Batch 10a: return a repr_X(...) call for a container expr, else None.
 
         Handles both literals (ast.List/Dict/Set/Tuple) and Names that
         are tracked in list_vars / dict_vars / set_vars / tuple_vars.
+        Extended in Batch 13b to binops, slices and calls.
         """
         # Literal containers.
         if isinstance(node, ast.List):
@@ -290,6 +332,16 @@ class CppEmitter(ast.NodeVisitor):
                 if arity == 2:
                     return f"repr_pair({emitted})"
                 return f"repr_tuple({emitted})"
+        # Batch 13b: binops, slices, calls that yield containers.
+        kind = self._container_kind(node)
+        if kind == "list":
+            return f"repr_vector({emitted})"
+        if kind == "set":
+            return f"repr_set({emitted})"
+        if kind == "dict":
+            return f"repr_map({emitted})"
+        if kind == "tuple":
+            return f"repr_tuple({emitted})"
         return None
 
     def _check_name(self, name: str, context: str):
