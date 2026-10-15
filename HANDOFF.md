@@ -1865,3 +1865,54 @@ args were recorded. Then `visit_ClassDef` checks
 **Next:** Bug #2 (`_container_repr` for binops/slices/calls), then
 #3 (loop var scoping), #5 (variable redeclaration), #6 (list
 methods on params).
+
+## 52. Batch 13a–13d.3 + "showcase runs" milestone (2026-10-15)
+
+Session goal: get `examples/showcase.kfy` to compile and run
+end-to-end. Done. The showcase — the full-tour acceptance test —
+builds and prints its complete output for the first time.
+
+### Bug board this session (8 bugs, 7 fixed)
+
+The showcase surfaced a chain of real language gaps. Each was
+found by the compiler, fixed at the emission level, and locked in
+with a transpile-only test file.
+
+| Batch | Bug | Fix |
+|-------|-----|-----|
+| 13a | Preamble ordering: `is_to_string` container overloads called `repr_*` before they were declared | Added forward decls; moved overloads above definitions |
+| 13a | Duplicate `input_line` in preamble (blocked *all* builds) | Removed the duplicate |
+| 13b | `_container_repr` didn't handle binops/slices/calls | New `_container_kind` helper; `repr_vector(xs + ys)`, `repr_set(s1 \| s2)`, `repr_vector(xs[1:3])` now wrap correctly |
+| 13b.1 | `str.split()` result not wrapped in `repr_vector` | Extended `_container_kind` to match `ast.Attribute.attr == "split"` |
+| 13c | Base ctor params defaulted to `int` when only called via `super().__init__(...)` | New pass 2 in `_scan_ctor_arg_types` walks `super().__init__` call sites |
+| 13d.1 | Unannotated base methods emitted non-virtual, but subclasses got `override` | Force `virtual` on base-class methods |
+| 13d.2 | `virtual auto` is invalid C++ | Infer concrete return type from method body |
+| 13d.3 | Child overrides still emitted `auto`, causing "conflicting return type" | Generalize return-type inference to all methods; emit `override` when name matches a parent method |
+
+Still open, warning-only: **Bug #12** — C++20 `auto` parameters
+under `-std=c++17`. Fix is one line in `kofty/cli.py`. Not
+showcase-blocking.
+
+### Test counts
+
+- Full transpile layer: **632 passing, 0 failing** (up from 599 at §51)
+- `tests/test_transpiler.py`: **162 passing**
+- `check.py`: **79 Python files parse cleanly**
+- Showcase: **builds and runs**
+
+### New test files this session
+
+| File | Count | Scope |
+|------|-------|-------|
+| `tests/test_batch13b_transpile.py` | 11 | binop/slice wrapping |
+| `tests/test_batch13b1_transpile.py` | 8 | `str.split()` wrapping |
+| `tests/test_batch13c_transpile.py` | 4 | base ctor inference |
+| `tests/test_batch13d1_transpile.py` | 4 | `virtual` on base methods |
+| `tests/test_batch13d2_transpile.py` | 6 | return-type inference |
+
+Plus 6 assertion updates in existing test files, to match the
+new (correct) emitted forms — `auto get_x()` → `int get_x()`,
+`auto speak() override` → `std::string speak() override`, etc.
+
+### Commits (pushed to origin/main)
+
