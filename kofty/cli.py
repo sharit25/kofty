@@ -162,7 +162,7 @@ def compile_cpp(cpp_file: Path, exe_file: Path, icon=None) -> bool:
     cmd = [
         "g++", str(cpp_file),
         "-o", str(exe_file),
-        "-std=c++17",
+        "-std=c++20",
     ]
 
     if icon is not None:
