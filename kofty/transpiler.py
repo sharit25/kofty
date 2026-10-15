@@ -139,6 +139,9 @@ class CppEmitter(ast.NodeVisitor):
         # Batch 8b: instance tracking for __str__ dispatch.
         self.instance_vars: dict = {}   # var name -> class name (for print/str dispatch)
         self.class_field_types: dict = {}  # Batch 10k.2: class name -> {field -> C++ type}
+        # Batch 13h: class name -> {param_index -> inferred C++ type}
+        # Filled by the ctor-arg pre-pass in transpile().
+        self.class_ctor_arg_types: dict = {}
         self.str_classes: set = set()   # user classes that define __str__
         # Batch 11a: name -> literal string captured at assignment time.
         # Used by .format() on a variable receiver.
@@ -3394,10 +3397,47 @@ class CppEmitter(ast.NodeVisitor):
                     )
         # Build parameter types from constructor annotations
         param_types: dict = {}
+        _defaults = list(init_method.args.defaults or [])
+        _n_total = len(init_method.args.args)
+        _n_defaults = len(_defaults)
+        _first_default_idx = _n_total - _n_defaults
+        for i, arg in enumerate(init_method.args.args):
+            if arg.arg == "self":
+                continue
+            if arg.annotation is not None:
+                param_types[arg.arg] = self._annot_to_cpp_type(arg.annotation)
+            elif i >= _first_default_idx:
+                # Batch 13h: infer from default value.
+                default_node = _defaults[i - _first_default_idx]
+                try:
+                    param_types[arg.arg] = self._infer_default_type(default_node)
+                except TranspileError:
+                    param_types[arg.arg] = None
+            else:
+                # Batch 13h: unknown — try call-site inference below.
+                param_types[arg.arg] = None
+
+        # Batch 13h: backfill from call-site inference.
+        _ctor_hint = self.class_ctor_arg_types.get(class_name, {})
+        for i, arg in enumerate(init_method.args.args):
+            if arg.arg == "self":
+                continue
+            if param_types[arg.arg] is None:
+                _param_index = i - 1  # skip self
+                if _param_index in _ctor_hint:
+                    param_types[arg.arg] = _ctor_hint[_param_index]
+
+        # Batch 13h: any param still None can't be inferred. Raise
+        # a clear error rather than emit broken C++.
         for arg in init_method.args.args:
             if arg.arg == "self":
                 continue
-            param_types[arg.arg] = self._annot_to_cpp_type(arg.annotation)
+            if param_types[arg.arg] is None:
+                raise TranspileError(
+                    f"cannot infer type of parameter '{arg.arg}' in "
+                    f"{class_name}.__init__. Add a type annotation, e.g. "
+                    f"`def __init__(self, {arg.arg}: str):`."
+                )
 
         # Collect field names and types from the stripped init_body
         field_types: dict = {}
@@ -3886,6 +3926,65 @@ class CppEmitter(ast.NodeVisitor):
     def generic_visit(self, node):
         raise TranspileError(f"Unsupported syntax: {type(node).__name__}")
 
+def _literal_cpp_type(node):
+    """Batch 13h: return the C++ type of a literal-shaped AST node,
+    or None if the node isn't a compile-time-known scalar literal."""
+    if isinstance(node, ast.Constant):
+        v = node.value
+        if isinstance(v, bool):
+            return "bool"
+        if isinstance(v, int):
+            return "int"
+        if isinstance(v, float):
+            return "double"
+        if isinstance(v, str):
+            return "std::string"
+        return None
+    if (isinstance(node, ast.UnaryOp)
+            and isinstance(node.op, (ast.USub, ast.UAdd))):
+        return _literal_cpp_type(node.operand)
+    return None
+
+
+def _scan_ctor_arg_types(tree, user_classes):
+    """Batch 13h: for each user class, infer the C++ type of each
+    constructor argument by scanning all ClassName(...) call sites.
+
+    Only literal-typed args contribute. If a position receives
+    conflicting literal types across call sites (e.g. one call passes
+    a string, another passes an int), that position is left
+    un-unified so the caller falls back to annotation-required.
+
+    Returns { class_name: { param_index: cpp_type } }.
+    """
+    result = {}
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        if not isinstance(node.func, ast.Name):
+            continue
+        cls = node.func.id
+        if cls not in user_classes:
+            continue
+        per_class = result.setdefault(cls, {})
+        for i, arg in enumerate(node.args):
+            t = _literal_cpp_type(arg)
+            if t is None:
+                continue
+            if i in per_class:
+                if per_class[i] != t:
+                    # Conflict: this argument position sees different
+                    # literal types at different call sites. Mark
+                    # as un-unifiable.
+                    per_class[i] = None
+            else:
+                per_class[i] = t
+    # Drop any positions that ended up None due to conflict.
+    for cls, per_class in result.items():
+        result[cls] = {k: v for k, v in per_class.items() if v is not None}
+    return result
+
+
 def transpile(source: str) -> str:
     """Convert InterScript source to a complete C++ translation unit."""
     tree = ast.parse(source)
@@ -3935,6 +4034,13 @@ def transpile(source: str) -> str:
                 for item in node.body
             )
             emitter.class_has_explicit_init[node.name] = has_init
+
+    # Batch 13h: whole-program ctor-arg type inference. Scan every
+    # ClassName(...) call for literal-typed args and unify per
+    # (class, position). Consumed by visit_ClassDef below.
+    emitter.class_ctor_arg_types = _scan_ctor_arg_types(
+        tree, emitter.user_classes
+    )
 
     # After Pass 1 completes: check for diamonds.
     for class_name, bases in emitter.class_bases.items():
