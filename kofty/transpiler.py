@@ -2421,8 +2421,11 @@ class CppEmitter(ast.NodeVisitor):
                         "Set elements must be literals for now."
                     )
                 value_cpp = self.expr(node.value)
-                self.emit(f"auto {name} = {value_cpp};")
-                self.declared.add(name)
+                if name in self.declared:
+                    self.emit(f"{name} = {value_cpp};")
+                else:
+                    self.emit(f"auto {name} = {value_cpp};")
+                    self.declared.add(name)
                 self.set_vars[name] = elem_type
                 return
 
