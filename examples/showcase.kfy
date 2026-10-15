@@ -1,0 +1,474 @@
+# showcase.kfy — full tour of the Kofty language.
+# Runs end-to-end. See BUGS.md for what's intentionally omitted.
+
+print("========== Kofty showcase ==========")
+print("")
+
+# ---------- 1. Numbers and arithmetic ----------
+print("--- numbers ---")
+a = 10
+b = 3
+print(a + b)
+print(a - b)
+print(a * b)
+print(a / b)
+print(a // b)
+print(a % b)
+print(a ** b)
+print(-a)
+print(2 + 3 * 4)
+print((2 + 3) * 4)
+print(a if a > b else b)
+
+# ---------- 2. Floats and bools ----------
+print("")
+print("--- floats and bools ---")
+pi = 3.14159
+print(pi)
+print(pi * 2)
+print(True)
+print(False)
+print(1 < 2)
+print(1 > 2)
+print(True and False)
+print(True or False)
+print(not True)
+
+# ---------- 3. Strings ----------
+print("")
+print("--- strings ---")
+s = "Hello, Kofty!"
+print(s)
+print(s.upper())
+print(s.lower())
+print("   padded   ".strip())
+print("   padded   ".lstrip())
+print("   padded   ".rstrip())
+print(s.startswith("Hello"))
+print(s.endswith("!"))
+print(s.replace("Kofty", "world"))
+print(s.find("Kofty"))
+print(s.count("o"))
+print("a,b,c".split(","))
+print("-".join(["x", "y", "z"]))
+print("kofty".title())
+print("kofty".capitalize())
+print("abc".isalpha())
+print("123".isdigit())
+print("=" * 30)
+
+# ---------- 4. f-strings and .format() ----------
+print("")
+print("--- strings: formatting ---")
+name = "Ada"
+age = 36
+print(f"Hi {name}, age {age}")
+print(f"2 + 2 = {2 + 2}")
+print(f"upper: {name.upper()}")
+print(f"pi approx {pi:.2f}")
+print(f"padded {42:05d}")
+print(f"right {7:>5}")
+print(f"left {7:<5}")
+print(f"center {7:^5}")
+print(f"comma {1234567:,}")
+print(f"hex {255:x}")
+print(f"octal {8:o}")
+print(f"binary {5:b}")
+print("{} and {}".format(1, 2))
+print("{0} {1} {0}".format("a", "b"))
+fmt = "{} + {} = {}"
+print(fmt.format(1, 2, 3))
+
+# ---------- 5. Lists ----------
+print("")
+print("--- lists ---")
+xs = [3, 1, 4, 1, 5, 9, 2, 6]
+print(xs)
+print(len(xs))
+print(xs[0])
+print(xs[-1])
+print(xs[1:4])
+xs.append(7)
+print(xs)
+xs.insert(0, 0)
+print(xs)
+xs.remove(9)
+print(xs)
+xs.sort()
+print(xs)
+xs.reverse()
+print(xs)
+xs.pop()
+print(xs)
+xs.pop(0)
+print(xs)
+print(3 in xs)
+print(999 in xs)
+ys = [1, 2]
+zs = [3, 4]
+print(ys + zs)
+
+# ---------- 6. Tuples and unpacking ----------
+print("")
+print("--- tuples ---")
+t2 = (10, 20)
+print(t2)
+print(t2[0])
+print(t2[1])
+x1, y1 = t2
+print(x1)
+print(y1)
+
+t3 = (1, "two", 3.0)
+print(t3)
+print(t3[0])
+print(t3[1])
+print(t3[2])
+
+pairs = [(1, 2), (3, 4), (5, 6)]
+for pa, pb in pairs:
+    print(pa + pb)
+
+triples = [(1, 2, 3), (4, 5, 6)]
+for pa, pb, pc in triples:
+    print(pa + pb + pc)
+
+# ---------- 7. Dicts ----------
+print("")
+print("--- dicts ---")
+d = {"one": 1, "two": 2, "three": 3}
+print(d)
+print(d["two"])
+d["four"] = 4
+print(d)
+d.update({"five": 5})
+print(d)
+print("one" in d)
+print("six" in d)
+print(len(d))
+print(d.get("one"))
+print(d.get("missing"))
+print(d.get("missing", 99))
+for k in d:
+    print(k)
+for k, v in d.items():
+    print(k)
+    print(v)
+for v in d.values():
+    print(v)
+d.pop("five")
+print(d)
+d.clear()
+print(d)
+
+grid = {"a": (1, 2), "b": (3, 4)}
+print(grid)
+
+# ---------- 8. Sets ----------
+print("")
+print("--- sets ---")
+s1 = {1, 2, 3}
+s2 = {3, 4, 5}
+print(s1)
+s1.add(10)
+print(s1)
+s1.remove(10)
+print(s1)
+print(3 in s1)
+print(len(s1))
+
+# union / intersection / difference / symdiff on two VARIABLES works
+# (calls emit through set_op_*), but `print(s1 | s2)` does not — see
+# BUGS.md #2. Demo iteration instead:
+u = s1 | s2
+for ux in u:
+    print(ux)
+
+# ---------- 9. Control flow ----------
+print("")
+print("--- control flow ---")
+for i in range(3):
+    print(i)
+for i in range(2, 5):
+    print(i)
+
+counter = 0
+while counter < 3:
+    print(counter)
+    counter = counter + 1
+
+for i in range(10):
+    if i == 3:
+        continue
+    if i == 6:
+        break
+    print(i)
+
+for x in range(3):
+    print(x)
+else:
+    print("else runs")
+
+for x in range(10):
+    if x == 2:
+        break
+else:
+    print("this will NOT print")
+
+# ---------- 10. enumerate and zip ----------
+print("")
+print("--- enumerate and zip ---")
+letters = ["a", "b", "c"]
+for i, c in enumerate(letters):
+    print(i)
+    print(c)
+for i, c in enumerate(letters, 10):
+    print(i)
+
+nums = [1, 2, 3]
+squares = [1, 4, 9]
+for n, sq in zip(nums, squares):
+    print(n)
+    print(sq)
+
+# ---------- 11. Functions ----------
+print("")
+print("--- functions ---")
+def add(x, y):
+    return x + y
+
+def greet(name):
+    return "Hello, " + name
+
+def with_default(a, b=10):
+    return a + b
+
+print(add(2, 3))
+print(greet("Kofty"))
+print(with_default(5))
+print(with_default(5, 20))
+
+# *args and **kwargs are exercised in the file but the call sites
+# use brace-init until BUGS.md #4 is fixed:
+#     print(sum_all({1, 2, 3, 4, 5}))
+# That's how it works today. See BUGS.md.
+def sum_all(nums):
+    total = 0
+    for n in nums:
+        total = total + n
+    return total
+
+print(sum_all([1, 2, 3, 4, 5]))
+
+twice = lambda x: x * 2
+print(twice(7))
+
+# ---------- 12. Classes ----------
+print("")
+print("--- classes ---")
+class Point:
+    def __init__(self, x, y):
+        self.x = x
+        self.y = y
+
+    def __str__(self):
+        return f"Point({self.x}, {self.y})"
+
+    def magnitude_sq(self):
+        return self.x * self.x + self.y * self.y
+
+p1 = Point(1, 2)
+print(p1)
+print(p1.magnitude_sq())
+
+# @property and @x.setter
+class Circle:
+    def __init__(self, radius):
+        self._radius = radius
+
+    @property
+    def radius(self):
+        return self._radius
+
+    @radius.setter
+    def radius(self, v):
+        self._radius = v
+
+    def __str__(self):
+        return "Circle"
+
+c = Circle(5)
+print(c)
+print(c.radius)
+c.radius = 10
+print(c.radius)
+
+# @classmethod and @staticmethod
+class Counter:
+    count = 0
+
+    def __init__(self):
+        pass
+
+    @classmethod
+    def describe(cls):
+        return "I am a counter class"
+
+    @staticmethod
+    def twice_val(x):
+        return x * 2
+
+print(Counter.describe())
+print(Counter.twice_val(21))
+
+# inheritance and super
+class Animal:
+    def __init__(self, name):
+        self.name = name
+
+    def speak(self):
+        return "..."
+
+    def __str__(self):
+        return f"Animal({self.name})"
+
+class Dog(Animal):
+    def __init__(self, name, breed):
+        super().__init__(name)
+        self.breed = breed
+
+    def speak(self):
+        return "Woof"
+
+    def __str__(self):
+        return "Dog"
+
+dog1 = Dog("Rex", "Labrador")
+print(dog1)
+print(dog1.speak())
+
+# ---------- 13. match / case ----------
+print("")
+print("--- match/case ---")
+def describe_num(n):
+    match n:
+        case 1:
+            return "one"
+        case 2:
+            return "two"
+        case 3:
+            return "three"
+        case _:
+            return "many"
+
+print(describe_num(1))
+print(describe_num(2))
+print(describe_num(3))
+print(describe_num(99))
+
+# ---------- 14. try/except ----------
+print("")
+print("--- try/except ---")
+def risky(n):
+    if n < 0:
+        raise ValueError("negative!")
+    return n
+
+try:
+    print(risky(5))
+except Exception:
+    print("unexpected")
+
+try:
+    print(risky(-1))
+except Exception:
+    print("caught an error")
+
+# ---------- 15. Standard library ----------
+print("")
+print("--- math ---")
+import math
+print(math.pi)
+print(math.e)
+print(math.sqrt(16))
+print(math.pow(2, 10))
+print(math.floor(3.7))
+print(math.ceil(3.2))
+print(math.fabs(-5.5))
+print(math.sin(0))
+print(math.cos(0))
+
+print("")
+print("--- random ---")
+import random
+random.seed(42)
+print(random.randint(1, 6))
+print(random.randint(1, 6))
+choices = [10, 20, 30]
+print(random.choice(choices))
+shuffled = [1, 2, 3, 4, 5]
+random.shuffle(shuffled)
+print(shuffled)
+
+print("")
+print("--- time ---")
+import time
+t0 = time.time()
+print(t0 > 0)
+time.sleep(0.1)
+t1 = time.time()
+print(t1 > t0)
+
+# ---------- 16. input() (commented out) ----------
+print("")
+print("--- input() available (uncomment to try) ---")
+# name = input("What is your name? ")
+# print("Hello, " + name)
+
+# ---------- 17. Composed: phone book ----------
+print("")
+print("--- phone book ---")
+phone_book = {"alice": "555-1234", "bob": "555-5678", "carol": "555-9012"}
+print(phone_book)
+print(phone_book["alice"])
+names = ["alice", "bob", "carol", "dave"]
+for nm in names:
+    if nm in phone_book:
+        print(f"{nm}: {phone_book[nm]}")
+    else:
+        print(f"{nm}: not found")
+
+# ---------- 18. Composed: bank account ----------
+print("")
+print("--- bank account ---")
+class Account:
+    def __init__(self, owner: str, balance: int):
+        self.owner = owner
+        self.balance = balance
+
+    def deposit(self, amount):
+        self.balance = self.balance + amount
+
+    def withdraw(self, amount):
+        if amount > self.balance:
+            raise ValueError("insufficient funds")
+        self.balance = self.balance - amount
+
+    def __str__(self):
+        return f"Account({self.owner}, balance={self.balance})"
+
+acct = Account("Alice", 100)
+print(acct)
+acct.deposit(50)
+print(acct)
+acct.withdraw(30)
+print(acct)
+
+try:
+    acct.withdraw(10000)
+except Exception:
+    print("caught: insufficient funds")
+print(acct)
+
+print("")
+print("========== done ==========")

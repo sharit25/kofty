@@ -196,3 +196,6 @@ Check `%USERPROFILE%\InterScript_backup_*.zip` for the latest backup.
 - **`Expand-Archive -Force`** overwrites matching files but does not
   delete extra files. Always back up before restoring.
 
+cd C:\InterScript-Language
+python generate_roadmap.py
+
