@@ -157,3 +157,87 @@ Check `%USERPROFILE%\InterScript_backup_*.zip` for the latest backup.
   before use; the transpiler preserves source order.
 - **`Expand-Archive -Force`** overwrites matching files but does not
   delete extra files. Always back up before restoring.
+
+# Kofty — Manual Roadmap
+
+Long-term direction, updated by hand. For the auto-generated batch
+history, see `ROADMAP.md`. For current bugs, see `BUGS.md`.
+
+## Immediate (next 2–3 sessions)
+
+**Fix the seven bugs in `BUGS.md`.** In priority order:
+
+1. **13a — Bug #1** (is_to_string overload ordering).
+2. **13d — Bug #4** (`*args` / `**kwargs` call-site regression).
+3. **`kofty --check` CLI flag** — enables compile-only test tier
+   without needing WDAC workaround.
+4. **13c — Bug #3** (loop variable scoping).
+5. **13b, 13f, 13e, 13g** — the remaining bugs.
+
+When all seven are fixed, `examples/showcase.kfy` compiles and
+runs end-to-end.
+
+## Next (after the bug fixes)
+
+**Release 0.1.0.**
+
+- GitHub Actions CI: run `kofty --check` on every `.kfy` file in
+  `examples/` on every push.
+- Publish to PyPI: `pip install kofty` works for anyone.
+- Version bump, tag, GitHub release.
+
+This is the milestone that turns Kofty from "a repo on my machine"
+into "a published language."
+
+## Then
+
+**Structural fix: programmatic preamble.** See `ARCHITECTURE.md`
+Part 4, Fix 1. Replace the hand-ordered list of preamble chunks
+with a dependency graph. Makes Bug #1 (and its class) structurally
+impossible.
+
+**Test tier upgrade: compile-and-run.** Once CI exists and runs on
+Linux (no WDAC), enable the runtime test tier again. Bring back the
+465 runtime tests that are currently unusable on the dev machine.
+
+## Long-term (post-1.0)
+
+Features that are deferred but wanted:
+
+- **Nested containers, deep.** List of lists, dict of dicts, 3+
+  levels. Currently only 2 levels work.
+- **Chained subscript:** `xs[0][0]`.
+- **List comprehensions.**
+- **`import json`.**
+- **`datetime` module.**
+- **Real module system** — `import x as y`, `from x import y`.
+  Currently `math` / `random` / `time` are three hardcoded names.
+- **Empty container literals:** `xs = []`, `d = {}`. Requires type
+  annotation or deferred type check.
+- **First-class functions:** passing a function as an argument.
+  `def apply(f, x): return f(x)` currently fails.
+- **Exception hierarchy:** custom exception classes, typed
+  `except ValueError:`.
+
+## Won't do
+
+- GUI / graphics. Kofty is a console language. Raylib support was
+  removed in the InterScript → Kofty rename.
+- Python compatibility at the library level. Kofty implements a
+  subset of Python syntax and semantics, not the CPython API.
+- Garbage collection. C++ RAII is the memory model.
+- Async / await.
+
+## Design principles
+
+1. **Console-only.** No GUI, no graphics.
+2. **Subset, not superset.** If Python doesn't do it, Kofty doesn't
+   either — unless there's a strong C++-idiomatic reason.
+3. **Fail at transpile time when possible.** Prefer
+   `TranspileError` with a clear message over a confusing g++
+   error. This is aspirational; Bug #7 violates it today.
+4. **Integration tests are the contract.** A feature is not done
+   when its unit test passes; it's done when it appears in a real
+   program that compiles and runs.
+5. **One bug, one batch.** No combining unrelated fixes. Serial
+   verification catches interactions.

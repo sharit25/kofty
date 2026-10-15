@@ -123,3 +123,92 @@ MIT — see [LICENSE](LICENSE).
 
 [System.IO.File]::WriteAllText("$PWD\README.md", $readme, (New-Object System.Text.UTF8Encoding $false))
 Write-Host "README.md replaced."
+
+# Kofty
+
+A small Python-subset language that compiles to C++ and runs on
+the command line. Write `.kfy` files; get native executables.
+
+    print("Hello, Kofty!")
+
+## Install
+
+    pip install kofty
+
+Until Kofty is published on PyPI, install from source:
+
+    git clone https://github.com/sharit25/kofty
+    cd kofty
+    pip install -e .
+
+Requires Python 3.11+ and `g++` on PATH.
+
+## Quick start
+
+    mkdir myproject && cd myproject
+    kofty init
+    # Write hello.kfy in your editor
+    kofty hello.kfy
+
+`kofty init` writes VS Code project files so `Ctrl+Shift+B` builds
+and runs the focused `.kfy` file.
+
+## What works
+
+See `examples/showcase.kfy` for a tour of every feature the
+language supports. Note: the showcase is currently **aspirational**
+— it exercises the full intended feature set, some of which isn't
+implemented or has bugs. See `BUGS.md` for the exact list and
+`SHOWCASE_STATUS.md` for the workflow.
+
+For a demo that runs today, see `examples/vscode_demo.kfy`.
+
+Highlights that work right now:
+
+- ints, floats, strings, bools, None
+- lists, dicts, sets, tuples, unpacking
+- `for`/`while`/`break`/`continue`, `for...else`
+- `enumerate`, `zip`
+- classes with `__init__`, methods, `__str__`, `__eq__`, `__add__`
+- `@property` / `@x.setter`, `@classmethod`, `@staticmethod`
+- inheritance and `super()`
+- f-strings with format specs, `.format()`
+- `match`/`case`, `try`/`except`
+- `import math`, `import random`, `import time`
+- `input()` for console I/O
+
+## What doesn't work yet
+
+See `BUGS.md` for the current list. Highlights:
+
+- nested containers in `print()` (compile error — Bug #1)
+- `print()` on an expression that returns a container (Bug #2)
+- reusing a variable name for a loop and a plain assignment (Bug #3)
+- `*args` / `**kwargs` at call sites (Bug #4)
+- variable redeclaration with a different type (Bug #5)
+- list methods on function parameters (Bug #6)
+- unannotated constructor parameters holding strings (Bug #7)
+
+## Documentation
+
+- `HANDOFF.md` — full session journal, current state, how to resume.
+- `ARCHITECTURE.md` — how the emitter works, why the test suite
+  misses certain bugs.
+- `BUGS.md` — known bugs and gaps.
+- `SHOWCASE_STATUS.md` — status of the aspirational showcase.
+- `ROADMAP.manual.md` — long-term direction.
+
+## Development
+
+    python check.py                       # parse all Python files
+    python -m pytest tests/ -q -k "transpile"   # fast test layer
+    python generate_roadmap.py            # regenerate ROADMAP.md
+
+The full suite (`python -m pytest tests/ -q`) includes runtime
+tests that compile and execute `.exe` files. On some Windows
+machines, WDAC blocks freshly-built executables (`WinError 4551`).
+See `ARCHITECTURE.md` §"The test model".
+
+## License
+
+MIT.
