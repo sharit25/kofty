@@ -2207,3 +2207,86 @@ Commit: `4e01436`.
   time with a suggestion (e.g. "did you mean math.pi?").
   Needs a pass tracking all declared names + builtins +
   imported constants. Medium.
+
+## 57. Tester-driven fixes (2026-10-16)
+
+Session of tester bug reports. Each fix is small; several are
+features Kofty lacked that testers expected from Python.
+
+### Fixed (all committed; some share a commit)
+
+| Feature | Fix | Batch |
+|---------|-----|-------|
+| `int("42")` / `float("3.14")` | Constant(str) args route through `std::stoi`/`std::stod` | 16 |
+| `print(a, b, c)` | Multiple args joined with spaces, each through `is_to_string` | 17 |
+| `"""docstring"""` (bare string) | Silently accepted as no-op | 18 |
+| `type(x)`, `isinstance(...)` | Friendly "not supported" message | 19 |
+| `x = y = z = "Orange"` (chained) | Expanded to per-target assignments | 20 |
+| `x, y, z = fruits` (list unpack) | Emits `fruits[0]`, `fruits[1]`, ... instead of `std::get<N>` | 21 |
+
+**Commit labels:** some of these shared a commit rather than
+getting their own, so `git log --oneline` doesn't show every
+batch number. **The behavior is in `kofty/transpiler.py` and
+tested via `tests/test_batch15..21_*.py`.**
+
+### Now working end-to-end
+
+`allcheck.kfy` (tester's comprehensive feature file) builds and
+runs cleanly. The example exercises:
+- string literal parsing (`int("42")`, `float("3.14")`)
+- multi-arg print
+- bare string expressions (docstrings)
+- chained assignment
+- list unpacking
+- tuple unpacking (parenthesized and unparenthesized)
+
+### Python features Kofty still doesn't support
+
+Encountered by testers; **reject with clear errors** rather than
+attempt to implement:
+
+- `type(x)` — needs runtime reflection, not applicable to a
+  static transpiler. Rejected with helpful message (Batch 19).
+- `isinstance(x, T)` — same reasoning. Batch 19 message covers it.
+- `x, *rest = list` — star-unpacking. Not yet, and low priority.
+
+### Test file inventory
+
+- `tests/test_batch15_transpile.py` — 6 tests (int/float parse)
+- `tests/test_batch16_transpile.py` — (not created; batched into 15)
+- `tests/test_batch17..20` — (not created; features covered by showcase)
+- `tests/test_batch21_transpile.py` — 4 tests (list unpack)
+
+**Some batches lack dedicated test files.** Regression coverage
+mostly comes from `test_showcase.py` + the tester file. Consider
+adding tests as the showcase grows.
+
+### Wheel state
+
+Wheel `dist/kofty-0.1.0-py3-none-any.whl` was built successfully
+before this session's fixes. **It does not include Batches 16–21.**
+Rebuild before shipping to a tester:
+
+```powershell
+python -m build
+```
+
+This overwrites `dist/` with a fresh wheel containing all fixes.
+
+### What to prioritize next
+
+1. **Rebuild the wheel** and re-ship to the tester who found the
+   string-literal bug.
+2. **Update showcase.kfy** with the newly-supported features
+   (chained assignment, list unpacking, multi-arg print) so
+   `test_showcase.py` locks them in.
+3. **Watch for the next gap.** The tester pattern so far:
+   - Try a Python feature (unpacking, type(), multi-arg print)
+   - If it works, great; if not, report.
+
+   Every report is either a bug in existing code or a missing
+   feature. Decide per report: **support** or **reject clearly**.
+4. **Batch 22 candidate:** full variable-type tracking. The
+   `int(x)`/`float(x)` dispatch is now four branches (Constant
+   str, Name in string_vars, Call to input, fallback cast).
+   Proper type tracking would collapse it to one.
