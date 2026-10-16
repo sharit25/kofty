@@ -2514,3 +2514,162 @@ The eventual fix must:
   local `x` shadows correctly.
 - **Batch 27:** hoist containers (lists, dicts, sets, tuples)
   so functions can read them.
+
+## 61. Batch 26 — per-function declared scope (2026-10-16)
+
+Fixed the last Python-scoping gap: a **function-local variable
+shadows the module-level one**.
+
+### The bug
+
+```python
+x = "awesome"
+
+def myfunc():
+    x = "fantastic"      # local, does NOT touch module x
+    print("Kofty is " + x)
+
+myfunc()
+print("Kofty is " + x)
+```
+
+**Python output:** `fantastic`, `awesome`
+**Kofty output (before):** `fantastic`, `fantastic`
+
+`myfunc`'s `x = "fantastic"` wrote the module-level global because
+`visit_Assign` saw `x in self.global_vars` and emitted a bare
+assignment. `self.declared` also leaked across functions: since
+`x` was assigned at module scope, `x` was "already declared"
+inside every function.
+
+### The fix
+
+Three coordinated changes to `kofty/transpiler.py`:
+
+1. **`CppEmitter.__init__`** — new `self.current_function = None`.
+   `visit_FunctionDef` already sets this to `node.name` before
+   emitting the body and back to `None` after. The attribute just
+   wasn't initialized, so code paths that ran at module level
+   (before any function) hit `AttributeError`.
+
+2. **`visit_FunctionDef`** — reset `self.declared = set()` for the
+   duration of the function body, restoring the caller's set
+   afterwards. This makes each function's locals truly local.
+
+3. **`visit_Assign`** — the check for "write to the C++ global" is
+   now:
+
+   ```python
+   _is_global_write = (
+       (self.current_function is None and name in self.global_vars)
+       or name in self.global_declared
+   )
+   ```
+
+   A name is written to the global **only when**:
+   - we're at module level (`current_function is None`) and the
+     name was hoisted, OR
+   - the enclosing function declared the name `global`.
+
+   Otherwise, an assignment creates a **local**, even if the name
+   is in `global_vars` (because some other function hoisted it).
+
+### The four tutorial examples — all match Python
+
+| Example | Python | Kofty |
+|---------|--------|-------|
+| 1 — local shadow | `fantastic`, `awesome` | ✅ Same |
+| 2 — read module from function | `Kofty is awesome` | ✅ Same |
+| 3 — `global x` write (no top-level) | `Kofty is fantastic` | ✅ Same |
+| 4 — `global x` write (with top-level) | `Kofty is fantastic` | ✅ Same |
+
+Test files: `D:\koftyTutorial\ex1.kfy` through `ex4.kfy`.
+
+### Two failed attempts before this one
+
+Attempt 1 (Batch 24.2 draft, not committed): hand-edited the
+three anchors but referenced `self.current_function` in
+`visit_Assign` **without initializing it in `__init__`**. Every
+test crashed with `AttributeError`. 346 failures, 10-minute hang.
+
+Attempt 2 (Batch 26, first version): the same anchors, but
+Anchor A adds `self.current_function = None` to `__init__`. This
+made the change safe.
+
+**Lesson:** never reference `self.<attr>` from a new code path
+without first checking that `<attr>` is initialized in `__init__`.
+The emitter is a long-lived object; uninitialized attributes
+surface as `AttributeError` deep in unrelated code.
+
+### Files changed
+
+- `kofty/transpiler.py` — three anchors (A, B, C).
+- `tests/test_batch24_transpile.py` — removed the stale
+  `@pytest.mark.xfail` marker on
+  `test_local_shadow_still_creates_local`; updated one assertion
+  to match the new (correct) emission `x = std::string("awesome")`.
+- `tests/test_batch26_transpile.py` — new (4 tests, including
+  a composite "all four tutorial examples" case).
+
+### Test count
+
+- **661 transpile tests passing, 0 failing, 0 xfailed.**
+- Fresh-venv test confirmed: `ex1.kfy` prints `fantastic` then
+  `awesome`; `ex4.kfy` prints `fantastic`.
+
+### Commit
+
+- `950ad59` — "Batch 26: per-function declared scope (local
+  shadows module-level)"
+
+### Known limitations still open
+
+1. **Function redefinition.** Stacking multiple examples in one
+   `.kfy` file that use the same function name (`def myfunc():`
+   twice) causes g++ `redefinition` errors. Python allows it
+   (later definition wins). Batch 27 candidate: detect duplicate
+   function names at transpile time — either keep the last
+   definition (Python semantics) or raise a clear
+   `TranspileError`.
+
+2. **Containers are not hoisted.** `xs = [1, 2, 3]` at module
+   scope is not visible from inside a function. Container
+   type-tracking (`self.list_vars`, `self.dict_vars`, etc.) runs
+   in `visit_Assign` and doesn't apply to hoisted containers.
+   Batch 28 candidate: hoist module-level containers, or run the
+   tracking for hoisted containers too.
+
+3. **Unbound names pass through to C++.** A reference to an
+   undefined name emits as a raw C++ identifier and fails at
+   g++ compile time. Batch 25 candidate: reject at transpile
+   time with a friendly message.
+
+### Wheel state
+
+`dist/kofty-0.1.0-py3-none-any.whl` was rebuilt after Batch 26.
+It contains Batches 22, 23, 24, 24.1, 26 — full scalar-scope
+semantics. **Ready to ship to testers.**
+
+### What to do next session
+
+1. **Ship the wheel** to the tester (it's already built).
+2. **Batch 27 or 28** depending on tester feedback — probably
+   whichever bug they hit next.
+3. **Update the pyproject.toml license field** to silence the
+   setuptools deprecation warnings (`license = "MIT"` instead of
+   `license = { text = "MIT" }`) before public PyPI release.
+
+### The bigger picture
+
+The last four batches (22 → 26) went from "no module-scope
+visibility" to "full Python scalar scoping":
+
+- Batch 22 — functions can **read** module-level scalars.
+- Batch 23 — clear error for `global` (superseded).
+- Batch 24 + 24.1 — functions can **write** module-level scalars
+  via `global x`.
+- Batch 26 — function-local `x` **shadows** module-level `x`
+  correctly.
+
+All four Python scoping rules for scalars are now implemented
+and tested.
