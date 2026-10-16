@@ -4187,6 +4187,24 @@ class CppEmitter(ast.NodeVisitor):
         self.emit("continue;")
 
     # ---- anything else ---------------------------------------------------
+    def visit_Global(self, node):
+        """`global x` — Python's declaration to write a module-level
+        variable from inside a function. Not supported yet.
+
+        Reading a module-level scalar from a function works (Batch 22).
+        Writing to one does not.
+        """
+        names = ", ".join(node.names)
+        raise TranspileError(
+            f"`global {names}` is not supported yet. Kofty functions "
+            f"can read module-level scalars, but writing to them from "
+            f"inside a function isn't implemented. Use a return value "
+            f"instead:\n"
+            f"    def change():\n"
+            f"        return \"new value\"\n"
+            f"    x = change()"
+        )
+
     def generic_visit(self, node):
         raise TranspileError(f"Unsupported syntax: {type(node).__name__}")
 
