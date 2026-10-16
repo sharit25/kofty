@@ -2097,27 +2097,38 @@ class CppEmitter(ast.NodeVisitor):
 
         # Special case: print() has variadic args and emits a stream expression.
         if name == "print":
-            if len(args) != 1:
-                raise TranspileError(
-                    f"print() currently takes exactly 1 argument, got {len(args)}"
-                )
-            # Batch 8b/8c: print(obj) or print(a + b) -> __str__().
-            _pcls = self._class_of_expr(node.args[0])
-            if _pcls is not None:
-                if _pcls not in self.str_classes:
-                    raise TranspileError(
-                        f"print(<{_pcls}>) requires {_pcls} "
-                        f"to define __str__"
-                    )
-                _pinner = args[0]
-                if isinstance(node.args[0], ast.BinOp):
-                    _pinner = f"({_pinner})"
-                return f"std::cout << {_pinner}.__str__() << std::endl"
-            # Batch 10a: print(container) -> repr_X(...)
-            _prepr = self._container_repr(node.args[0], args[0])
-            if _prepr is not None:
-                return f"std::cout << {_prepr} << std::endl"
-            return f"std::cout << {args[0]} << std::endl"
+            # Batch 17: allow multiple arguments, join with spaces.
+            # Each arg goes through the same dispatch as single-arg
+            # print (class __str__, container repr, or raw stream).
+            if len(args) == 0:
+                return 'std::cout << "" << std::endl'
+            parts = []
+            for i, a in enumerate(node.args):
+                expr_cpp = args[i]
+                # User class -> __str__()
+                _pcls = self._class_of_expr(a)
+                if _pcls is not None:
+                    if _pcls not in self.str_classes:
+                        raise TranspileError(
+                            f"print(<{_pcls}>) requires {_pcls} "
+                            f"to define __str__"
+                        )
+                    if isinstance(a, ast.BinOp):
+                        expr_cpp = f"({expr_cpp})"
+                    parts.append(f"{expr_cpp}.__str__()")
+                    continue
+                # Container -> repr_X()
+                _prepr = self._container_repr(a, expr_cpp)
+                if _prepr is not None:
+                    parts.append(_prepr)
+                    continue
+                # Scalar -> is_to_string
+                parts.append(f"is_to_string({expr_cpp})")
+            return (
+                "std::cout << "
+                + ' << " " << '.join(parts)
+                + " << std::endl"
+            )
 
         # Batch 12: input() reads a line from stdin.
         #   input()          -> input_line("")
@@ -2181,6 +2192,9 @@ class CppEmitter(ast.NodeVisitor):
             if (isinstance(node.args[0], ast.Name)
                     and node.args[0].id in self.string_vars):
                 return f"std::stoi({args[0]})"
+            if (isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)):
+                return f"std::stoi({args[0]})"
             return f"(int){args[0]}"
         # Special case: float(x) → C-style cast to double
         if name == "float":
@@ -2195,6 +2209,9 @@ class CppEmitter(ast.NodeVisitor):
                 return f"std::stod({args[0]})"
             if (isinstance(node.args[0], ast.Name)
                     and node.args[0].id in self.string_vars):
+                return f"std::stod({args[0]})"
+            if (isinstance(node.args[0], ast.Constant)
+                    and isinstance(node.args[0].value, str)):
                 return f"std::stod({args[0]})"
             return f"(double){args[0]}"
 
@@ -2298,6 +2315,11 @@ class CppEmitter(ast.NodeVisitor):
                 code += ";"
             self.emit(code)
             return
+        # Batch 18: bare string literal (Python docstring idiom) is a
+        # no-op. Accept it silently.
+        if (isinstance(node.value, ast.Constant)
+                and isinstance(node.value.value, str)):
+            return
         raise TranspileError("Only function-call expressions are allowed as statements.")
 
     def _to_c_string(self, node: ast.AST, cpp_expr: str) -> str:
@@ -2313,6 +2335,17 @@ class CppEmitter(ast.NodeVisitor):
         return f"std::string({cpp_expr}).c_str()"
 
     def visit_Assign(self, node: ast.Assign):
+        # Batch 20: chained assignment `a = b = c = value`.
+        # Python evaluates RHS once and assigns to each target.
+        # We expand to multiple single-target assignments sharing
+        # the same value node. Safe for literal RHS; may double-
+        # evaluate a side-effectful RHS (documented).
+        if len(node.targets) > 1:
+            for target in node.targets:
+                sub = ast.Assign(targets=[target], value=node.value)
+                ast.fix_missing_locations(sub)
+                self.visit_Assign(sub)
+            return
         if len(node.targets) != 1:
             raise TranspileError("Multiple assignment targets are not supported.")
         target = node.targets[0]
@@ -2638,6 +2671,15 @@ class CppEmitter(ast.NodeVisitor):
             # std::pair: a variable (`t`), an attribute (`obj.pos`), or
             # a function call. We emit its C++ form and access .first/.second.
             src = self.expr(node.value)
+            # Batch 21: list unpacking uses subscript; tuple/pair uses
+            # .first/.second (arity 2) or std::get<N> (arity 3+).
+            if (isinstance(node.value, ast.Name)
+                    and node.value.id in self.list_vars):
+                for i, elt in enumerate(target.elts):
+                    self._check_name(elt.id, "Variable name")
+                    self.emit(f"auto {elt.id} = {src}[{i}];")
+                    self.declared.add(elt.id)
+                return
             # Determine arity: prefer RHS variable's recorded arity,
             # fall back to len(target.elts).
             arity = len(target.elts)
