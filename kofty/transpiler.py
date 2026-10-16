@@ -149,6 +149,7 @@ class CppEmitter(ast.NodeVisitor):
         self.string_vars: set = set()   # Batch 15: names assigned from input() or str literals
         self.global_vars: dict = {}     # Batch 22: scalar top-level vars hoisted to global scope
         self.global_declared: set = set()  # Batch 24: names declared `global` in current function
+        self.current_function = None       # Batch 26: name of enclosing function, None at module level
         # Batch 11b: name -> tuple arity returned by a function.
         # Populated in visit_FunctionDef; consumed in visit_Assign.
         self.func_return_arity: dict = {}
@@ -2624,10 +2625,18 @@ class CppEmitter(ast.NodeVisitor):
                     and isinstance(node.value, ast.Constant)
                     and isinstance(node.value.value, str)):
                 value = f"std::string({value})"
-            # Batch 22/24: hoisted globals are already declared at
-            # file scope. A name declared `global` inside this function
-            # also targets the file-scope variable.
-            if name in self.global_vars or name in self.global_declared:
+            # Batch 22/24/26: a name is written to the C++ global only
+            # when:
+            #   - we're at module level (current_function is None) and
+            #     the name was hoisted to global scope, OR
+            #   - the enclosing function declared the name `global`.
+            # Otherwise, a name in global_vars is shadowed locally.
+            _is_global_write = (
+                (self.current_function is None
+                 and name in self.global_vars)
+                or name in self.global_declared
+            )
+            if _is_global_write:
                 self.emit(f"{name} = {value};")
                 self.declared.add(name)
             elif name in self.declared:
@@ -3539,16 +3548,21 @@ class CppEmitter(ast.NodeVisitor):
         # We emit functions *before* main(), so we collect them separately.
         body_lines = []
         saved_lines, saved_indent = self.lines, self.indent
-        # Batch 24: per-function scope for `global` declarations.
+        # Batch 24/26: per-function scope for `global` declarations
+        # and for local variables. A local `x` in a function must not
+        # be visible as the module-level `x`.
         saved_global_declared = self.global_declared
+        saved_declared = self.declared
         self.lines, self.indent = body_lines, 1
         self.global_declared = set()
+        self.declared = set()
         try:
             for stmt in node.body:
                 self.visit(stmt)
         finally:
             self.lines, self.indent = saved_lines, saved_indent
             self.global_declared = saved_global_declared
+            self.declared = saved_declared
 
         # Restore instance_vars to its pre-call state.
         self.instance_vars = saved_instance_vars

@@ -30,10 +30,9 @@ print("Kofty is " + x)
     assert "std::string x;" in out
     main = out.split("int main()")[1]
     # Both assignments are bare (target the C++ global).
-    assert 'x = "awesome";' in main
+    assert 'x = std::string("awesome");' in main
     assert "x = std::string(\"fantastic\");" in out or "x = \"fantastic\";" in out
 
-@pytest.mark.xfail(reason="Batch 26: function-local shadows global")
 def test_local_shadow_still_creates_local():
     # func_b assigns x but does NOT declare it global.
     # That x is local; it should NOT write the global.
