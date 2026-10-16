@@ -32,7 +32,7 @@ match x:
     # The match itself emits a single if, not an if/else chain.
     # Look for the match-specific closing brace: the case body should be
     # followed by the `}` that closes the if, then main continues.
-    assert 'std::cout << "one"' in out
+    assert 'is_to_string("one")' in out
 
 def test_match_int_two_cases_emits_else_if():
     out = transpile("""

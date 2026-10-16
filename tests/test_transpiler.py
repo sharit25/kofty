@@ -86,12 +86,12 @@ def test_class_accepts_player_pattern():
 def test_print_string():
     out = transpile('print("hello")')
     assert '#include <iostream>' in out
-    assert 'std::cout << "hello" << std::endl;' in out
+    assert 'is_to_string("hello")' in out
 
 
 def test_print_number():
     out = transpile('print(42)')
-    assert "std::cout << 42 << std::endl;" in out
+    assert "is_to_string(42)" in out
 
 def test_str_of_variable():
     out = transpile(
@@ -659,7 +659,7 @@ def test_for_in_list_basic():
         "    print(x)\n"
     )
     assert "for (auto x : xs) {" in out
-    assert "std::cout << x << std::endl;" in out
+    assert "is_to_string(x)" in out
 
 def test_for_in_list_with_body_accumulator():
     out = transpile(

@@ -1,4 +1,4 @@
-﻿"""Batch 15: int(x) / float(x) parse string variables.
+"""Batch 15: int(x) / float(x) parse string variables.
 
 Fix surfaced by examples/user_input.kfy: int(age_str) emitted
 (int)age_str, which is an invalid C++ cast from std::string to
@@ -8,20 +8,20 @@ from kofty.transpiler import transpile
 
 
 def test_int_of_named_variable_uses_stoi():
-    out = transpile("""
+    out = transpile('''
 s = input("num: ")
 n = int(s)
 print(n)
-""")
+''')
     assert "std::stoi(s)" in out
 
 
 def test_float_of_named_variable_uses_stod():
-    out = transpile("""
+    out = transpile('''
 s = input("num: ")
 n = float(s)
 print(n)
-""")
+''')
     assert "std::stod(s)" in out
 
 

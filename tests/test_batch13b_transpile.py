@@ -121,4 +121,4 @@ print(x)
     # Extract the main body and check.
     main = out.split("int main()")[1] if "int main()" in out else out
     assert "repr_vector" not in main
-    assert "std::cout << x" in main or "std::cout << (x)" in main
+    assert "is_to_string(x)" in main or "std::cout << x" in main
