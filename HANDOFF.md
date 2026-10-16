@@ -2290,3 +2290,121 @@ This overwrites `dist/` with a fresh wheel containing all fixes.
    `int(x)`/`float(x)` dispatch is now four branches (Constant
    str, Name in string_vars, Call to input, fallback cast).
    Proper type tracking would collapse it to one.
+
+   ## 58. Batch 22 — top-level scalars hoisted to C++ global scope (2026-10-16)
+
+### The gap
+
+Python lets a function read a module-level variable:
+
+    x = "awesome"
+    def myFunc():
+        print("Kofty is " + x)     # reads global x
+    myFunc()
+
+Kofty emitted myFunc as a standalone C++ function with no
+access to main's locals, so `x` was undeclared — g++ error:
+
+    error: 'x' was not declared in this scope
+
+Surfaced by tester code. This is the natural Python idiom; every
+tester writing real Python hits it.
+
+### The fix
+
+Top-level `Name` assignments whose type is a **scalar**
+(int / double / bool / std::string) **AND** whose name is read
+from inside any function body are hoisted to C++ global scope.
+The declaration is emitted **before the functions**, so the
+functions see it. The assignment in main uses the bare form.
+
+### Scope — what's hoisted, what's not
+
+**Hoisted:** top-level scalar Name assignments read from a function.
+
+**Not hoisted:**
+- Containers (list / dict / set / tuple). Their type-tracking in
+  `visit_Assign` is load-bearing — `list_vars`, `dict_vars`,
+  `set_vars`, `tuple_vars` — and running it for a hoisted var
+  would require pulling the tracking out of the emission branch.
+  That's a bigger change; deferred.
+- User-class instances. Constructor calls have their own emission
+  path.
+- `vec2(...)` results. Tracked in `vec2_vars`.
+- Any top-level scalar that no function reads. **Programs that
+  don't use globals get zero change to emitted code.**
+
+### What's NOT fixed
+
+Reading a container from inside a function still fails:
+
+    xs = [1, 2, 3]
+    def show(): print(xs)     # xs undeclared in C++ function body
+
+That's a known limitation of this batch. A follow-up batch (23)
+would need to hoist containers, which means making the container
+type-tracking side effects run for hoisted vars too.
+
+### Design decisions
+
+1. **Read-analysis, not blanket hoisting.** Two earlier attempts
+   (hoist every top-level variable; hoist every top-level scalar)
+   broke 55 and 12 tests respectively. The read-analysis filter
+   broke zero — nothing else in the emitted code changes.
+
+2. **Emit globals before functions, not after.** C++ requires
+   declaration-before-use. The first attempt put the global block
+   between functions and int main(), which failed: `myFunc` saw
+   `x` at line 469, `std::string x;` was at line 472. The correct
+   position is between the classes block and the functions block.
+
+3. **Scalars only.** Full container hoisting needs the container
+   type-tracking to be independent of where the variable is
+   declared. Deferred to Batch 23.
+
+### Files changed
+
+- `kofty/transpiler.py`
+  - `CppEmitter.__init__` — added `self.global_vars: dict = {}`
+  - `transpile()` — new pre-pass collects top-level scalars read
+    from functions
+  - `transpile()` assembly — global declarations inserted between
+    classes and functions
+  - `visit_Assign` — hoisted names emit bare assignment (no auto)
+- `tests/test_batch22_transpile.py` — new (4 tests)
+
+### Tests
+
+- **650 passing, 0 failing** — no regression.
+- `global_test.kfy` builds and prints `Kofty is awesome`.
+- `list_test.kfy` builds and prints `[1, 2, 3, 4]` — containers
+  unaffected.
+- `examples/allcheck.kfy` runs end-to-end.
+
+### Lessons
+
+1. **The idempotency guard in impl scripts was too broad.** The
+   check `if "Batch 22:" in src:` matched a comment left over from
+   a partial application. Fixed to `if "self.global_vars: dict = {}"
+   in src:` — precise, only set by the actual anchor.
+
+2. **Commit before trying a multi-anchor impl script.** The v2
+   attempt left the working tree in a partially-applied state; the
+   revert required `git restore`, and then the v3 script's guard
+   falsely reported "already applied." From a clean tree, v3
+   applied all four anchors and worked.
+
+3. **Blast radius matters.** The v1 fix was correct in principle
+   but touched every program. The v3 fix touches only programs
+   that read a global from a function. Always ask: how many
+   programs' emitted code changes?
+
+### What's next
+
+The tester file `allcheck.kfy` (or its equivalent) should now
+build and run. The remaining known tester gap is:
+
+- **Reading a container from a function.** Deferred to Batch 23.
+
+If the tester hits more issues, they'll be new — the string and
+scalar cases are covered.

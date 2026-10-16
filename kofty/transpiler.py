@@ -147,6 +147,7 @@ class CppEmitter(ast.NodeVisitor):
         # Used by .format() on a variable receiver.
         self.str_literal_vars: dict = {}
         self.string_vars: set = set()   # Batch 15: names assigned from input() or str literals
+        self.global_vars: dict = {}     # Batch 22: scalar top-level vars hoisted to global scope
         # Batch 11b: name -> tuple arity returned by a function.
         # Populated in visit_FunctionDef; consumed in visit_Assign.
         self.func_return_arity: dict = {}
@@ -2622,7 +2623,12 @@ class CppEmitter(ast.NodeVisitor):
                     and isinstance(node.value, ast.Constant)
                     and isinstance(node.value.value, str)):
                 value = f"std::string({value})"
-            if name in self.declared:
+            # Batch 22: hoisted globals are already declared at
+            # file scope — never re-declare with `auto`.
+            if name in self.global_vars:
+                self.emit(f"{name} = {value};")
+                self.declared.add(name)
+            elif name in self.declared:
                 self.emit(f"{name} = {value};")
             else:
                 self.emit(f"auto {name} = {value};")
@@ -4457,6 +4463,42 @@ def transpile(source: str) -> str:
             emitter.optional_vars[_name] = _value_assigned[_name]
             emitter.use_optional = True
 
+    # Batch 22: hoist top-level SCALAR variables to C++ global
+    # scope, so functions can read them. Only names actually read
+    # inside a function are hoisted — this minimizes the change
+    # to emitted code for programs that don't need globals.
+    # Containers stay local (their tracking in visit_Assign is
+    # load-bearing and would need to run for hoisted vars too).
+    _HOISTABLE = {"int", "double", "bool", "std::string"}
+    _func_reads = set()
+    for _fnode in tree.body:
+        if not isinstance(_fnode, ast.FunctionDef):
+            continue
+        _params = {a.arg for a in _fnode.args.args}
+        _params |= {a.arg for a in _fnode.args.kwonlyargs}
+        if _fnode.args.vararg:
+            _params.add(_fnode.args.vararg.arg)
+        if _fnode.args.kwarg:
+            _params.add(_fnode.args.kwarg.arg)
+        for _sub in ast.walk(_fnode):
+            if (isinstance(_sub, ast.Name)
+                    and isinstance(_sub.ctx, ast.Load)
+                    and _sub.id not in _params):
+                _func_reads.add(_sub.id)
+    for _node in tree.body:
+        if not isinstance(_node, ast.Assign):
+            continue
+        if len(_node.targets) != 1:
+            continue
+        if not isinstance(_node.targets[0], ast.Name):
+            continue
+        _gname = _node.targets[0].id
+        if _gname not in _func_reads:
+            continue
+        _gtype = emitter._infer_expr_type(_node.value)
+        if _gtype in _HOISTABLE:
+            emitter.global_vars[_gname] = _gtype
+
     # Pre-pass: detect pointer lists.
     # A list variable is a pointer list if:
     #   1. It's initialized at top level with `xs = []`
@@ -5084,6 +5126,12 @@ def transpile(source: str) -> str:
         "}",
         "",
         '\n\n'.join(emitter.classes),
+        '',
+        # Batch 22: global scalar declarations — BEFORE functions,
+        # so functions that read them see the declaration.
+        '\n'.join(
+            f"{_t} {_n};" for _n, _t in emitter.global_vars.items()
+        ),
         '',
         '\n\n'.join(emitter.functions),
         '',
