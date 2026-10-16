@@ -2408,3 +2408,109 @@ build and run. The remaining known tester gap is:
 
 If the tester hits more issues, they'll be new — the string and
 scalar cases are covered.
+
+## 60. Batch 24 + 24.1 — `global x` implementation (2026-10-16)
+
+Continuation of §59. Full `global` write support.
+
+### Working state
+
+- **660 transpile tests passing, 1 xfailed** (the xfail documents a
+  known limitation).
+- `global_write.kfy`, `global_write2.kfy` — build and print correctly.
+- `local_only.kfy` — first print works, outer read fails with a g++
+  error (correct Python semantics).
+
+### Feature
+
+```python
+def myFunc():
+    global x
+    x = "fantastic"
+
+myFunc()
+print("Kofty is " + x)     # Kofty is fantastic
+```
+
+### Batch 24.1 — the pre-pass fixup
+
+The first pass of Batch 24 only looked at top-level `ast.Assign`
+nodes. If `x` is declared `global` inside a function but never
+assigned at module scope, the pre-pass missed it. Batch 24.1
+walks function bodies to find those declarations and infer types.
+
+### Known limitation (xfailed)
+
+```python
+x = "outer"
+
+def func_a():
+    global x
+    x = "changed"
+
+def func_b():
+    x = "local"            # local in Python, writes global in Kofty
+    print(x)
+
+func_b()                   # Python: "local"; Kofty: writes global
+func_a()
+print(x)                   # Python: "changed"; Kofty: "local"
+```
+
+**Root cause:** `visit_FunctionDef` doesn't reset `self.declared`
+for function bodies. Top-level functions share a single `declared`
+set with `main`. When `func_b` assigns `x`, the emitter sees `x in
+self.global_vars` (from `func_a`'s hoist) and emits a bare
+assignment.
+
+**Fix (deferred to Batch 26):** per-function scope for
+`self.declared` in `visit_FunctionDef`, plus a `visit_Assign`
+guard that checks `self.current_function is None` before treating
+`self.global_vars` membership as "write the global."
+
+**Two failed attempts** (see §59, Batches 24.2 draft) broke the
+emitter with `AttributeError: 'CppEmitter'` on `self.current_function`
+because that attribute wasn't initialized in `__init__`. Reverted.
+The eventual fix must:
+1. Initialize `self.current_function = None` in `__init__`.
+2. Save/reset/restore `self.declared` in `visit_FunctionDef`.
+3. Guard `visit_Assign`'s `global_vars` check with
+   `self.current_function is None`.
+
+### Files changed
+
+- `kofty/transpiler.py` — five anchors in Batch 24, one in
+  Batch 24.1.
+- `tests/test_batch23_transpile.py` — obsolete
+  `test_global_raises_clear_error` deleted.
+- `tests/test_batch24_transpile.py` — new (5 tests, 1 xfail).
+
+### Lessons
+
+1. **Never edit `transpiler.py` by hand without checking what
+   attributes exist.** The 24.2 hand edits assumed
+   `self.current_function` was initialized. It wasn't — the
+   attribute is set only *inside* `visit_FunctionDef`. Every
+   other code path hit `AttributeError`.
+
+2. **A hang during pytest is usually the previous batch's edits,
+   not the tests.** The 10-minute burn was the broken
+   `transpiler.py`, not a slow test.
+
+3. **When git shows the same file as both "staged" and
+   "unstaged", reset and re-check the diff.** `git restore` had
+   reverted the working tree but not the staged copy, creating a
+   misleading `git status`.
+
+4. **Multi-line git commit messages with embedded quotes fail
+   in PowerShell.** Use single-line messages for anything
+   containing `"..."`.
+
+### What's next
+
+- **Batch 25:** friendly error for unbound names (currently pass
+  through to g++).
+- **Batch 26:** per-function `declared` scope so a function's
+  local `x` shadows correctly.
+- **Batch 27:** hoist containers (lists, dicts, sets, tuples)
+  so functions can read them.
