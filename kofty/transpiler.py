@@ -148,6 +148,7 @@ class CppEmitter(ast.NodeVisitor):
         self.str_literal_vars: dict = {}
         self.string_vars: set = set()   # Batch 15: names assigned from input() or str literals
         self.global_vars: dict = {}     # Batch 22: scalar top-level vars hoisted to global scope
+        self.global_declared: set = set()  # Batch 24: names declared `global` in current function
         # Batch 11b: name -> tuple arity returned by a function.
         # Populated in visit_FunctionDef; consumed in visit_Assign.
         self.func_return_arity: dict = {}
@@ -2623,9 +2624,10 @@ class CppEmitter(ast.NodeVisitor):
                     and isinstance(node.value, ast.Constant)
                     and isinstance(node.value.value, str)):
                 value = f"std::string({value})"
-            # Batch 22: hoisted globals are already declared at
-            # file scope — never re-declare with `auto`.
-            if name in self.global_vars:
+            # Batch 22/24: hoisted globals are already declared at
+            # file scope. A name declared `global` inside this function
+            # also targets the file-scope variable.
+            if name in self.global_vars or name in self.global_declared:
                 self.emit(f"{name} = {value};")
                 self.declared.add(name)
             elif name in self.declared:
@@ -3537,10 +3539,16 @@ class CppEmitter(ast.NodeVisitor):
         # We emit functions *before* main(), so we collect them separately.
         body_lines = []
         saved_lines, saved_indent = self.lines, self.indent
+        # Batch 24: per-function scope for `global` declarations.
+        saved_global_declared = self.global_declared
         self.lines, self.indent = body_lines, 1
-        for stmt in node.body:
-            self.visit(stmt)
-        self.lines, self.indent = saved_lines, saved_indent
+        self.global_declared = set()
+        try:
+            for stmt in node.body:
+                self.visit(stmt)
+        finally:
+            self.lines, self.indent = saved_lines, saved_indent
+            self.global_declared = saved_global_declared
 
         # Restore instance_vars to its pre-call state.
         self.instance_vars = saved_instance_vars
@@ -4188,22 +4196,11 @@ class CppEmitter(ast.NodeVisitor):
 
     # ---- anything else ---------------------------------------------------
     def visit_Global(self, node):
-        """`global x` — Python's declaration to write a module-level
-        variable from inside a function. Not supported yet.
-
-        Reading a module-level scalar from a function works (Batch 22).
-        Writing to one does not.
-        """
-        names = ", ".join(node.names)
-        raise TranspileError(
-            f"`global {names}` is not supported yet. Kofty functions "
-            f"can read module-level scalars, but writing to them from "
-            f"inside a function isn't implemented. Use a return value "
-            f"instead:\n"
-            f"    def change():\n"
-            f"        return \"new value\"\n"
-            f"    x = change()"
-        )
+        """`global x` — declare x as a module-level write target
+        inside the current function (Batch 24). Subsequent
+        assignments to x in this function target the C++ global."""
+        for name in node.names:
+            self.global_declared.add(name)
 
     def generic_visit(self, node):
         raise TranspileError(f"Unsupported syntax: {type(node).__name__}")
@@ -4503,6 +4500,36 @@ def transpile(source: str) -> str:
                     and isinstance(_sub.ctx, ast.Load)
                     and _sub.id not in _params):
                 _func_reads.add(_sub.id)
+    # Batch 24: also collect names declared `global` in any function —
+    # they need a top-level declaration so the function can write to them.
+    _global_declared_names = set()
+    # Batch 24.1: for globals with no top-level assignment, infer the
+    # type from the assignment inside the function that declares them
+    # `global`.
+    _global_implied_types = {}   # name -> C++ type from a `global x` body
+    for _fnode in tree.body:
+        if not isinstance(_fnode, ast.FunctionDef):
+            continue
+        _fdeclared = set()
+        for _sub in ast.walk(_fnode):
+            if isinstance(_sub, ast.Global):
+                _fdeclared.update(_sub.names)
+        _global_declared_names.update(_fdeclared)
+        for _stmt in ast.walk(_fnode):
+            if not isinstance(_stmt, ast.Assign):
+                continue
+            if len(_stmt.targets) != 1:
+                continue
+            if not isinstance(_stmt.targets[0], ast.Name):
+                continue
+            _tname = _stmt.targets[0].id
+            if _tname not in _fdeclared:
+                continue
+            if _tname in _global_implied_types:
+                continue
+            _t = emitter._infer_expr_type(_stmt.value)
+            if _t in _HOISTABLE:
+                _global_implied_types[_tname] = _t
     for _node in tree.body:
         if not isinstance(_node, ast.Assign):
             continue
@@ -4511,10 +4538,15 @@ def transpile(source: str) -> str:
         if not isinstance(_node.targets[0], ast.Name):
             continue
         _gname = _node.targets[0].id
-        if _gname not in _func_reads:
+        if _gname not in _func_reads and _gname not in _global_declared_names:
             continue
         _gtype = emitter._infer_expr_type(_node.value)
         if _gtype in _HOISTABLE:
+            emitter.global_vars[_gname] = _gtype
+    # Batch 24.1: hoist names whose only assignment is inside a
+    # function that declares them `global`.
+    for _gname, _gtype in _global_implied_types.items():
+        if _gname not in emitter.global_vars:
             emitter.global_vars[_gname] = _gtype
 
     # Pre-pass: detect pointer lists.
