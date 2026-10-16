@@ -36,7 +36,7 @@ Issues = "https://github.com/sharit25/kofty/issues"
 kofty = "kofty.cli:main"
 
 [tool.setuptools]
-packages = ["kofty"]
+packages = ["kofty", "kofty.data"]
 
 [tool.setuptools.package-data]
 kofty = ["*.pyi", "data/*"]

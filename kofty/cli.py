@@ -140,7 +140,8 @@ def build_icon_object(icon: Path, build_dir: Path, stem: str):
     obj_file = build_dir / f"{stem}_res.o"
 
     icon_abs = icon.resolve()
-    rc_file.write_text(f'IDI_ICON1 ICON "{icon_abs}"\n', encoding="utf-8")
+    icon_abs_posix = str(icon_abs).replace("\\", "/")
+    rc_file.write_text(f'IDI_ICON1 ICON "{icon_abs_posix}"\n', encoding="utf-8")
 
     cmd = ["windres", str(rc_file), "-O", "coff", "-o", str(obj_file)]
     print(f"[Kofty] (icon) {' '.join(cmd)}")

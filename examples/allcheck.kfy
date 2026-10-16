@@ -1,0 +1,9 @@
+x = "awesome"
+
+def myFunc():
+    x = "fantastic"
+    print("Kofty is " + x)
+
+myFunc()
+
+print("Kofty is " + x)

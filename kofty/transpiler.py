@@ -4834,6 +4834,9 @@ def transpile(source: str) -> str:
         "static std::string is_to_string(int n) { return std::to_string(n); }",
         "static std::string is_to_string(double d) { return format_float(d); }",
         "static std::string is_to_string(bool b) { return b ? \"True\" : \"False\"; }",
+        "static std::string is_to_string(size_t n) { return std::to_string(n); }",
+        "static std::string is_to_string(long long n) { return std::to_string(n); }",
+        "static std::string is_to_string(unsigned int n) { return std::to_string(n); }",
 
         "// ---- // (floor division) helpers ----",
         "static int is_floordiv(int a, int b) {",
