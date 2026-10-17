@@ -143,6 +143,8 @@ class CppEmitter(ast.NodeVisitor):
         self.indent = 1  # inside main()
         self.functions: List[str] = []  # function bodies emitted separately
         self.user_funcs: set = set()
+        # Batch 27: names of functions shadowed by a later def of the same name.
+        self.shadowed_funcs: set = set()
         # Batch 5b: name -> C++ element type of a *args variadic param.
         # Presence in this dict means the function has a *args param.
         self.func_varargs: dict = {}
@@ -3486,6 +3488,8 @@ class CppEmitter(ast.NodeVisitor):
     def visit_FunctionDef(self, node: ast.FunctionDef):
         """User-defined function. Uses `auto` return type unless annotated."""
         self._check_name(node.name, "Function name")
+        if id(node) in self.shadowed_funcs:
+            return
         self.user_funcs.add(node.name)
 
         # Batch 11b: record tuple return arity, if determinable.
@@ -4538,6 +4542,18 @@ def transpile(source: str) -> str:
         tree, emitter.user_classes
     )
 
+    # Batch 27: for each function name, keep only the LAST top-level
+    # `def` with that name (Python semantics). Earlier defs of the
+    # same name are shadowed and skipped during Pass 2.
+    _defs_by_name: dict = {}
+    for _node in tree.body:
+        if isinstance(_node, ast.FunctionDef):
+            _defs_by_name.setdefault(_node.name, []).append(_node)
+    for _name, _defs in _defs_by_name.items():
+        if len(_defs) > 1:
+            for _earlier in _defs[:-1]:
+                emitter.shadowed_funcs.add(id(_earlier))
+
     # After Pass 1 completes: check for diamonds.
     for class_name, bases in emitter.class_bases.items():
         if len(bases) > 1:
@@ -4804,6 +4820,10 @@ def transpile(source: str) -> str:
         if isinstance(node, ast.ClassDef):
             emitter.visit(node)  # appends to emitter.classes
         elif isinstance(node, ast.FunctionDef):
+            # Batch 27: skip shadowed defs (only the LAST def of each
+            # name is emitted, matching Python semantics).
+            if id(node) in emitter.shadowed_funcs:
+                continue
             emitter.visit(node)  # appends to emitter.functions
 
     # Pass 3: emit main() body.
