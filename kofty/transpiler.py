@@ -2275,6 +2275,88 @@ class CppEmitter(ast.NodeVisitor):
                 return f"std::stod({args[0]})"
             return f"(double){args[0]}"
 
+        # ---- Batch 29: constructor functions ---------------------------------
+        if name == "bool":
+            if len(args) != 1:
+                raise TranspileError(
+                    f"bool() takes exactly 1 argument, got {len(args)}"
+                )
+            return f"(bool)({args[0]})"
+
+        if name == "list":
+            if len(args) != 1:
+                raise TranspileError(
+                    "list() requires exactly 1 argument in this build. "
+                    "Supported: list((a, b, c)) or list([a, b, c]) or "
+                    "list(xs) where xs is a list variable."
+                )
+            arg = node.args[0]
+            if isinstance(arg, ast.Tuple):
+                # Rewrap as a list literal so the existing ast.List
+                # emitter handles element types uniformly.
+                if len(arg.elts) == 0:
+                    raise TranspileError(
+                        "list(()) requires element types; use a "
+                        "non-empty tuple or list literal."
+                    )
+                synthetic = ast.List(elts=arg.elts, ctx=ast.Load())
+                return self.expr(synthetic)
+            # List literal, list variable, or slice — pass through.
+            return self.expr(arg)
+
+        if name == "tuple":
+            if len(args) != 1:
+                raise TranspileError(
+                    "tuple() requires exactly 1 argument in this build. "
+                    "Supported: tuple((a, b)) or tuple([a, b]) where the "
+                    "argument is a 2-element or 3+-element iterable."
+                )
+            arg = node.args[0]
+            if isinstance(arg, ast.List):
+                if len(arg.elts) < 2:
+                    raise TranspileError(
+                        "tuple(...) requires at least 2 elements."
+                    )
+                synthetic = ast.Tuple(elts=arg.elts, ctx=ast.Load())
+                return self.expr(synthetic)
+            # Tuple literal or name — pass through.
+            return self.expr(arg)
+
+        if name == "set":
+            if len(args) != 1:
+                raise TranspileError(
+                    "set() requires exactly 1 argument in this build. "
+                    "Supported: set((a, b, c)) or set([a, b, c]) or "
+                    "set(xs) where xs is a set variable."
+                )
+            arg = node.args[0]
+            if isinstance(arg, (ast.Tuple, ast.List)):
+                if len(arg.elts) == 0:
+                    raise TranspileError(
+                        "set() from an empty literal requires a set "
+                        "variable: use `set()` is not supported yet."
+                    )
+                synthetic = ast.Set(elts=arg.elts)
+                return self.expr(synthetic)
+            # Set variable or other — pass through.
+            return self.expr(arg)
+
+        if name == "dict":
+            if len(args) != 1:
+                raise TranspileError(
+                    "dict() with 0 arguments is not supported "
+                    "(no key/value types to infer). "
+                    "dict(**kwargs) is not supported yet. "
+                    "Supported: dict({...}) with a dict literal."
+                )
+            arg = node.args[0]
+            if not isinstance(arg, ast.Dict):
+                raise TranspileError(
+                    "dict(...) requires a dict literal argument in this "
+                    "build. Supported: dict({\"k\": v, ...})."
+                )
+            return self.expr(arg)
+
         # Special case: ptr(ClassName(args)) → new ClassName(args)
         # Creates a heap-allocated pointer to a class instance.
         if name == "ptr":
