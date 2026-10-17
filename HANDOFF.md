@@ -3113,3 +3113,121 @@ Emits:
   (blocked by `_emit_set_expr` hardcoding `std::set<int>`).
 - **Batch 29.3:** `list()` / `set()` zero-arg forms with type
   annotation: `xs: list[int] = list()`.
+
+## 65. Batch 28 — hoist module-level containers (2026-10-17)
+
+### The gap
+
+Module-level scalars were hoisted to C++ global scope in Batch 22
+so functions could read them. Containers were **not** hoisted:
+
+    xs = [1, 2, 3]
+    def show():
+        print(xs)     # ✗ g++: 'xs' was not declared in this scope
+    show()
+
+Python works. Kofty failed at g++ time. This was the last
+scoping hole from the §60–61 arc.
+
+### Why containers were held back
+
+Container variables are tracked in `emitter.list_vars`,
+`emitter.dict_vars`, `emitter.set_vars`, `emitter.tuple_vars`
+as a **side effect of `visit_Assign`**. If a container were
+hoisted with a bare `std::vector<int> xs;` declaration, those
+dicts would be empty and `print(xs)` inside a function would
+emit raw `is_to_string(xs)` instead of `repr_vector(xs)`.
+
+### The fix — two anchors in `kofty/transpiler.py`
+
+**A.** `_infer_expr_type` gains `ast.Dict` and `ast.Set`
+branches (line ~1536, after the `ast.Tuple` branch):
+
+    if isinstance(node, ast.Dict):  ->  "std::map<std::string, {V}>"
+    if isinstance(node, ast.Set):   ->  "std::set<int>"
+
+`ast.Set` hardcodes `int` element type to match the existing
+`_emit_set_expr`. Prior to this anchor, `_infer_expr_type`
+returned `None` for both, so hoisting couldn't distinguish
+"unknown type" from "dict/set".
+
+**B.** The hoisting pre-pass (line ~4758, the second
+`for _node in tree.body:` loop) gains a container branch
+after the existing `_HOISTABLE` check:
+
+    if _gtype is None: continue
+    if _gtype.startswith("std::vector<"):
+        emitter.global_vars[_gname] = _gtype
+        emitter.list_vars[_gname] = <elem>
+    elif _gtype.startswith("std::map<"):
+        emitter.global_vars[_gname] = _gtype
+        emitter.dict_vars[_gname] = <value-type>
+    elif _gtype.startswith("std::set<"):
+        emitter.global_vars[_gname] = _gtype
+        emitter.set_vars[_gname] = <elem>
+    elif _gtype.startswith("std::pair<") or "std::tuple<":
+        emitter.global_vars[_gname] = _gtype
+        emitter.tuple_vars[_gname] = <arity>
+
+The `global_vars` addition triggers:
+- `visit_Assign` at 2774 already checks `name in self.global_vars`
+  → emits bare `xs = std::vector<int>{1,2,3};` in `main()`
+- The declaration loop at 5415 emits `std::vector<int> xs;`
+  in the global scope, before `main()`
+
+The tracking dicts addition triggers:
+- `print(xs)` inside a function → `repr_vector(xs)`
+- `for x in xs:` inside a function → `for (auto x : xs)` (list
+  iteration branch)
+- `xs[i]`, `len(xs)`, `x in xs` all dispatch correctly
+
+### Scope
+
+**Hoisted:** module-level container literals read from any
+function body. List, dict, set, tuple. Element types inferred
+via `_infer_expr_type`.
+
+**Not hoisted:**
+- Containers whose RHS isn't a literal (`xs = get_items()`)
+- Empty container literals (already rejected by base emitter)
+- Containers only used at module scope (no function reads them —
+  same read-analysis as Batch 22)
+
+**Not in scope:**
+- Mutation from a function without `global xs` — that's the
+  Python semantics for container mutation (Python doesn't
+  require `global` to call `.append()`, but Kofty's global-write
+  detection in `visit_Assign` fires on `name in global_vars`
+  which would cause a bare assignment to shadow). Deferred to
+  28.1 if needed.
+
+### Tests
+
+`tests/test_batch28_transpile.py` — 10 tests, all passing.
+- 5 positive (one per container kind)
+- 1 iteration dispatch
+- 1 negative (no hoisting if no function reads)
+- 1 scalar regression
+- 1 mixed scalar + container
+- 1 bare-assignment-in-main check
+
+Transpile suite: **711 passing** (was 701; +10)
+
+### Files changed
+
+- `kofty/transpiler.py` — anchors A, B
+- `tests/test_batch28_transpile.py` — new
+
+### Commit
+
+    (hash)
+
+### Follow-up candidates
+
+- **Batch 28.1:** container mutation from a function without
+  `global xs` — need to distinguish `xs.append(4)` (mutation,
+  fine) from `xs = [4,5]` (rebinding, needs `global`).
+- **Batch 28.2:** containers returned from functions —
+  `xs = make_list()` where `make_list` returns `list[int]`.
+  Would need function-return type tracking analogous to
+  Batch 11b's tuple arity tracking.
