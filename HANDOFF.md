@@ -3231,3 +3231,99 @@ Transpile suite: **711 passing** (was 701; +10)
   `xs = make_list()` where `make_list` returns `list[int]`.
   Would need function-return type tracking analogous to
   Batch 11b's tuple arity tracking.
+
+## 66. Post-Batch-28 polish — v0.3.2 / v0.3.3 (2026-10-17)
+
+### What landed in v0.3.2
+
+- `str_find(std::string, char)` overload in the preamble (Batch 30a)
+- `examples/hangman.kfy` — a full working Hangman game
+- `kofty/cli.py` — VERSION now reads from `importlib.metadata`,
+  fallback `0.0.0-dev` if not installed
+
+### What landed in v0.3.3
+
+- `pyproject.toml` bump to 0.3.3 so the wheel rebuild picked
+  up the fixed `cli.py`. v0.3.2's wheel contained a stale
+  `cli.py` (VERSION = "0.0.0-dev" hardcoded).
+
+### Hangman status
+
+`examples/hangman.kfy` compiles and runs. The game works
+end-to-end via the `.find()`-based workaround for `in` on
+untyped parameters. Adding `in` on untyped vars is **Batch 30.1**
+(call-site type inference) — deferred until a real user hits it.
+
+### The stale-wheel lesson
+
+**`python -m build` only captures the current file state.**
+If you edit `cli.py` after building the wheel but before
+pushing, and don't rebuild, the shipped wheel contains the
+pre-edit code. Symptom: fresh venv install works, but the
+code you see in source doesn't match runtime behavior.
+
+Fix: rebuild after every edit, before `gh release create`.
+Or bump the version and rebuild — the version bump forces a
+fresh wheel.
+
+### Test counts
+
+- Transpile suite: 711 passing
+- Batch 28 tests: 10 passing
+- Batch 29 tests: 17 passing
+- Batch 27 tests: 7 passing
+- Batch 25 tests: 12 passing
+
+## 66. Post-Batch-28 polish — v0.3.2 / v0.3.3 (2026-10-17)
+
+### What landed in v0.3.2
+
+- `str_find(std::string, char)` overload in the preamble (Batch 30a)
+- `examples/hangman.kfy` — a full working Hangman game
+- `kofty/cli.py` — `VERSION` now reads from `importlib.metadata.version("kofty")`,
+  with fallback `"0.0.0-dev"` if the package isn't installed
+
+### What landed in v0.3.3
+
+- `pyproject.toml` bumped to `0.3.3` so `python -m build` picked up the
+  fixed `cli.py`. **v0.3.2's wheel contained a stale `cli.py`**
+  (VERSION was still `"0.0.0-dev"` because the try/except block hadn't
+  been saved before the build).
+
+### Hangman status
+
+`examples/hangman.kfy` compiles and runs. It uses a `.find()`-based
+workaround for `in` on untyped parameters — see Batch 30.1 below.
+
+### The stale-wheel lesson
+
+**`python -m build` only captures the current file state.**
+If you edit a file after building but before pushing, and don't
+rebuild, the shipped wheel contains the pre-edit code. Symptom:
+`pip install` succeeds, `kofty --version` runs, but shows the wrong
+version number.
+
+Fix: rebuild after every edit, before `gh release create`.
+Bumping the version and rebuilding also forces a fresh wheel —
+which is what v0.3.3 did.
+
+### Test counts
+
+- Transpile suite: 711 passing
+- Batch 25 tests: 12 passing
+- Batch 27 tests: 7 passing
+- Batch 28 tests: 10 passing
+- Batch 29 tests: 17 passing
+
+### Open follow-ups (all deferred)
+
+- **Batch 30.1** — full `in` on untyped parameters via call-site
+  type inference. Hangman uses the `.find()` workaround.
+- **`dict(a=1, b=2)`** — needs kwargs at call sites.
+- **`set()` with no args** — needs element-type inference from later
+  usage.
+- **`list(xs)` where `xs` is a variable** — Batch 29 supports literals
+  only.
+
+Every one of these is a "wait for a tester report" feature. Don't
+build speculatively.
