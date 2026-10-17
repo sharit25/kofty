@@ -2673,3 +2673,287 @@ visibility" to "full Python scalar scoping":
 
 All four Python scoping rules for scalars are now implemented
 and tested.
+
+## 62. First release — kofty 0.1.0 wheel shipped (2026-10-17)
+
+### What shipped
+
+First public wheel published as a GitHub Release:
+
+    https://github.com/sharit25/kofty/releases/tag/v0.1.0
+
+- Wheel: `dist/kofty-0.1.0-py3-none-any.whl` (75,158 bytes)
+- Source commit: `6572042`
+- Requires: Python 3.10+, g++ with C++20 (GCC 10+ or Clang 16+)
+- Sent to one tester for feedback
+
+### The three fixes in this commit
+
+**1. `windres` path escaping** (`kofty/cli.py`).
+
+Symptom: `windres` failed on every icon embed with
+`unrecognized escape sequence` and truncated the icon path at
+the first backslash-letter pair (e.g. `\f` in `fresh_venv`, `\n`
+in `new_venv`, `\v` in `verify_venv`). The `.rc` file contained
+Windows backslash paths, and resource-compiler `.rc` files treat
+`\` as an escape character.
+
+Fix: emit forward slashes in the `.rc` file.
+
+    icon_abs = icon.resolve()
+    icon_abs_posix = str(icon_abs).replace("\\", "/")
+    rc_file.write_text(f'IDI_ICON1 ICON "{icon_abs_posix}"\n',
+                       encoding="utf-8")
+
+Windows `windres` accepts forward slashes. Bug only surfaced when
+the install path contained an escape-lookalike sequence — which is
+why earlier tests (paths without `\f`/`\n`/`\v`) didn't catch it.
+Verified from three such paths: `fresh_venv`, `new_venv`,
+`verify_venv`.
+
+**2. `is_to_string` overload ambiguity** (`kofty/transpiler.py`).
+
+Symptom: `print(xs.size())` and similar emitted
+`is_to_string(<size_type>)`, which is ambiguous between the
+`int`, `double`, and `bool` overloads. g++ error:
+
+    error: call of overloaded 'is_to_string(std::vector<int>::size_type)' is ambiguous
+
+Affects `.size()`, `.length()`, `.find()`, `.count()`, and any
+expression yielding `size_t`/`unsigned long long`.
+
+Fix: add three overloads to the preamble, after the `bool`
+overload:
+
+    static std::string is_to_string(size_t n)       { return std::to_string(n); }
+    static std::string is_to_string(long long n)    { return std::to_string(n); }
+    static std::string is_to_string(unsigned int n) { return std::to_string(n); }
+
+Three overloads because `size_type` maps to `size_t` on some
+targets and `unsigned long long` on others; `long long` covers
+signed arithmetic like `xs.size() - 1`; `unsigned int` covers
+32-bit `size_t`.
+
+**3. `kofty.data` package declaration** (`pyproject.toml`).
+
+Symptom: setuptools 84 warned on every build that `kofty.data`
+was importable but not in `packages`. Cosmetic — the icon files
+*were* included in the wheel — but noisy.
+
+Fix:
+
+    [tool.setuptools]
+    packages = ["kofty", "kofty.data"]
+
+Build output is now warning-free.
+
+### `examples/allcheck.kfy` — kept as a working example
+
+The tester's original file defined `myFunc` twice and referenced a
+function-local `x` at module scope. That is invalid Python
+(`NameError`) and invalid Kofty (unbound name passed through to
+g++). Rewritten as a clean example of the §61 ex1 semantics:
+
+    x = "awesome"
+
+    def myFunc():
+        x = "fantastic"
+        print("Kofty is " + x)
+
+    myFunc()
+    print("Kofty is " + x)
+
+Output:
+
+    Kofty is fantastic
+    Kofty is awesome
+
+Builds and runs. Added to the repo in commit `6572042`.
+
+### Test count
+
+- `check.py`: 87 Python files parse cleanly
+- Transpile suite: **665 passing, 0 failing**
+- Runtime suite: ~465 tests, WDAC-blocked on this machine (see §19)
+
+### Commit list this session
+
+    c724e32  HANDOFF: §61 Batch 26 per-function declared scope
+    950ad59  Batch 26: per-function declared scope (local shadows module-level)
+    6572042  Fix windres path escaping; add size_t is_to_string overloads;
+             declare kofty.data in packages  ← this session
+
+### What this session's work did NOT fix
+
+- **Batch 25** — unbound names still pass through to g++. The
+  tester's original `allcheck.kfy` was the trigger; now rewritten
+  as valid code, so the missing error surface is only visible if
+  someone else writes an unbound reference.
+- **Batch 27** — function redefinition. The tester's file also had
+  `def myFunc()` twice; we didn't fix this because the file was
+  rewritten. Still an open gap.
+- **Batch 28** — containers not hoisted to module scope.
+- **Batch 29** — constructor functions (`list()`, `tuple()`,
+  `set()`, `dict()`, `bool()`).
+- **Batch 30** — `complex` type.
+
+### Next session (priority order)
+
+1. Wait for tester feedback on `v0.1.0`. Watch for:
+   - Unbound name (Batch 25)
+   - Function redefinition (Batch 27)
+   - Container read from function (Batch 28)
+   - Missing constructor function (Batch 29)
+2. **Batch 25** — reject unbound names at transpile time. Small,
+   high-value error-surface improvement.
+3. **Batch 27** — function redefinition. Same trigger family as 25.
+4. **Batch 29** — constructor functions. Cheap, directly answers
+   the Python-types tutorial page.
+
+### Lessons from the release process
+
+1. **The wheel and the source tree can drift silently.** The
+   `size_t` overloads had been in `transpiler.py` for a while, but
+   the shipped wheel was built before them. The showcase failed at
+   g++ time in a fresh venv while the source tree built fine. Always
+   `python -m build` immediately before publishing, and always
+   test the *wheel* in a fresh venv, not the source tree.
+
+2. **Escape-lookalike paths in test directories catch real bugs.**
+   `fresh_venv` (`\f`), `new_venv` (`\n`), `verify_venv` (`\v`) —
+   all three trigger the `windres` escaping bug. Test directory
+   names are not neutral; they are inputs.
+
+3. **`git diff` opens a pager on Windows PowerShell.** Use
+   `git --no-pager diff <file>` when you need to see the whole
+   thing without `less` swallowing the output. The truncated paste
+   in this session was a pager artifact, not a real git problem.
+
+4. **`gh` install requires reopening the terminal.** `winget
+   install --id GitHub.cli` succeeded, but `gh` wasn't on PATH
+   until the shell was restarted. If `gh` reports "not recognized"
+   right after install, close and reopen PowerShell.
+
+5. **`gh auth login` is a one-time cost per machine.** The
+   browser flow produces a one-time code; copy it, open the URL,
+   paste, authorize. After that, `gh release create` just works.
+
+## 63. Batch 25 — reject unbound names at transpile time (2026-10-17)
+
+### The gap
+
+Before this batch, an unbound name like `print(x)` where `x` is never
+defined emitted raw C++ `x`, which g++ rejected with:
+
+    error: 'x' was not declared in this scope
+    build\file.cpp:480:59: note: suggested alternative: 'y'
+
+The error pointed at line 480 of the emitted `.cpp`, not at the
+`.kfy` line that produced it. Tester's original `allcheck.kfy`
+hit this — see §62.
+
+### The fix — six anchors in `kofty/transpiler.py`
+
+**A.** New module-level `_BUILTIN_NAMES` set (near line 51) —
+    builtin function names, constants, and importable module
+    names (`math`, `random`, `time`, `raylib`).
+
+**B.** New `_RAYLIB_CONSTANTS` set (line ~63) — keyboard and
+    mouse constants recognized by the raylib preamble.
+
+**C.** New attribute `self.all_bound_names: set = set()` in
+    `CppEmitter.__init__` (line 149).
+
+**D.** New module-level function `_collect_bound_names(tree)`
+    (ends line 4311). Walks the AST once, returns the set of
+    every name bound anywhere: assign targets, aug-assign
+    targets, for targets, `with ... as` targets, function and
+    class names, function parameters (posonly, args, kwonly,
+    vararg, kwarg), import aliases, `except ... as` names, and
+    lambda params. If `import raylib` appears, adds
+    `_RAYLIB_CONSTANTS` to the set.
+
+**E.** In `transpile()` (line 4482): call
+    `emitter.all_bound_names = _collect_bound_names(tree)`
+    after the import hoisting loop, before the user class/function
+    registration loop.
+
+**F.** In `expr()`'s `ast.Name` branch (line 494): check that
+    the name is in `_BUILTIN_NAMES`, `self.all_bound_names`,
+    `self.user_funcs`, `self.user_classes`, `self.declared`,
+    `self.instance_vars`, `self.global_vars`, or
+    `self.lambda_vars`. If not, raise
+    `TranspileError(f"name '{_nm}' is not defined")`.
+
+### Design — lenient, whole-file, not strict
+
+The check allows a name to be **used before it is assigned**:
+
+    print(greet)
+    greet = "hi"
+
+Python would raise `NameError` at runtime here (line 1 runs before
+line 2). But strict ordering analysis is a whole new pass. Batch 25
+is deliberately lenient: **if the name is bound *anywhere* in the
+file, it's allowed.** Strict ordering is a future batch.
+
+### Test fixture change — this is the workflow shift
+
+Transpile-only tests that used undeclared names for brevity now
+fail. Example: `test_boolean_and` was:
+
+    out = transpile("x = a and b")
+
+After Batch 25:
+
+    TranspileError: name 'a' is not defined
+
+The fix is to declare the names:
+
+    out = transpile("a = True\nb = False\nx = a and b")
+
+Same for the raylib fixtures:
+
+    out = transpile("import raylib\nx = is_key_down(KEY_LEFT)")
+
+**Affected tests (10 total, all fixed):**
+- `test_boolean_and`
+- `test_boolean_or`
+- `test_boolean_not`
+- `test_boolean_and_three_operands`
+- `test_boolean_and_with_comparisons`
+- `test_keyboard_constant_passthrough`
+- `test_keyboard_constant_space`
+- `test_mouse_button_left_passthrough`
+- `test_mouse_button_right_passthrough`
+- `test_mouse_pressed_passthrough`
+
+**Workflow note for future tests:** any transpile-only test that
+uses a bare identifier now must bind it first. This is correct
+Kofty behavior (matches Python semantics for unbound names) but is
+a change from pre-Batch-25 fixtures.
+
+### Files changed
+
+- `kofty/transpiler.py` — anchors A–F
+- `tests/test_transpiler.py` — 10 fixture updates
+- `tests/test_batch25_transpile.py` — new, 12 tests
+
+### Test counts
+
+- `check.py`: 88 Python files parse cleanly
+- Transpile suite: **677 passing** (was 665; +12 from new file)
+- Batch 25 tests: **12 passing**
+
+### Commit
+
+    daa48f0
+
+### Known follow-up
+
+- **Batch 25.1 (future):** strict ordering — reject a name used
+  before its module-level assignment. Requires scope-accurate
+  analysis; deferred.
+- **Batch 27 (next):** function redefinition. Currently `def f():`
+  twice emits two C++ functions with the same name; g++ errors.
+  Python semantics: later definition wins.
