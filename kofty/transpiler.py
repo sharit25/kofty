@@ -52,6 +52,7 @@ _BUILTIN_NAMES: set = {
     # Builtin functions (dispatched in _call_expr)
     "print", "input", "str", "int", "float", "bool", "len",
     "list", "tuple", "dict", "set",
+    "open",
     "vec2", "ptr",
     # Builtin functions that only appear in for-loop iter position
     "range", "enumerate", "zip",
@@ -60,7 +61,7 @@ _BUILTIN_NAMES: set = {
     # Constants (also handled as ast.Constant in some paths)
     "True", "False", "None",
     # Module names — valid as `Name` when followed by an Attribute
-    "math", "random", "time", "raylib",
+    "math", "random", "time", "raylib", "os",
 }
 # ---- Batch 25: raylib constants (only in scope when `import raylib`) ----
 _RAYLIB_CONSTANTS: set = {
@@ -161,6 +162,8 @@ class CppEmitter(ast.NodeVisitor):
         # A call to one of these names emits as a variable call,
         # not as a call to a registered user function.
         self.lambda_vars: set = set()
+        # Batch 32: names assigned from `open(...)` — dispatch .read/.write/.close
+        self.file_vars: set = set()
         self.declared: set = set()  # variable names already declared in current scope
         self.classes: List[str] = []  # class definitions emitted separately
         self.user_classes: set = set()
@@ -2023,6 +2026,43 @@ class CppEmitter(ast.NodeVisitor):
             # in InterScript currently has methods with these names.
             # Receiver is coerced to std::string to handle string
             # literals and concatenations uniformly.
+            # Batch 32: file-method dispatch. If the receiver is a
+            # tracked file variable, handle .read/.readline/.write/.close
+            # here before falling through to string methods.
+            if (isinstance(node.func.value, ast.Name)
+                    and node.func.value.id in self.file_vars):
+                _fname = node.func.value.id
+                _fattr = node.func.attr
+                if _fattr == "read":
+                    if len(args) == 0:
+                        return f"{_fname}.read()"
+                    if len(args) == 1:
+                        return f"{_fname}.read({args[0]})"
+                    raise TranspileError(
+                        f"f.read() takes 0 or 1 argument, got {len(args)}"
+                    )
+                if _fattr == "readline":
+                    if args:
+                        raise TranspileError(
+                            f"f.readline() takes no arguments, got {len(args)}"
+                        )
+                    return f"{_fname}.readline()"
+                if _fattr == "write":
+                    if len(args) != 1:
+                        raise TranspileError(
+                            f"f.write() takes exactly 1 argument, got {len(args)}"
+                        )
+                    return f"{_fname}.write({args[0]})"
+                if _fattr == "close":
+                    if args:
+                        raise TranspileError(
+                            f"f.close() takes no arguments, got {len(args)}"
+                        )
+                    return f"{_fname}.close()"
+                raise TranspileError(
+                    f"File object '{_fname}' does not support .{_fattr}(). "
+                    f"Supported methods: .read(), .readline(), .write(s), .close()"
+                )
             _sm = node.func.attr
             _recv = self._as_std_string(node.func.value,
                                         self.expr(node.func.value))
@@ -2219,6 +2259,31 @@ class CppEmitter(ast.NodeVisitor):
                 f"input() takes 0 or 1 argument, got {len(args)}"
             )
 
+        # Batch 32: open(path[, mode]) -> File(path, mode)
+        if name == "open":
+            if len(args) == 1:
+                return f"File({args[0]}, \"r\")"
+            if len(args) == 2:
+                mode_arg = node.args[1]
+                if not (isinstance(mode_arg, ast.Constant)
+                        and isinstance(mode_arg.value, str)):
+                    raise TranspileError(
+                        "open() mode must be a string literal. "
+                        f"Got: {ast.unparse(mode_arg)}"
+                    )
+                _mode = mode_arg.value
+                if _mode not in ("r", "w", "a", "x", "rt", "wt", "at", "xt"):
+                    raise TranspileError(
+                        f"open() mode '{_mode}' is not supported. "
+                        f"Supported: 'r', 'w', 'a', 'x', 'rt', 'wt', 'at', 'xt'. "
+                        f"(Binary modes 'rb', 'wb' are not yet supported.)"
+                    )
+                return f"File({args[0]}, {args[1]})"
+            raise TranspileError(
+                f"open() takes 1 or 2 arguments, got {len(args)}"
+            )
+
+        # Special case: str() converts a value to a string.
         # Special case: str() converts a value to a string.
         # Works on number literals, variables (assumed numeric for now),
         # and expressions. String literals pass through unchanged.
@@ -2764,6 +2829,11 @@ class CppEmitter(ast.NodeVisitor):
             # name so future calls dispatch through the variable.
             if isinstance(node.value, ast.Lambda):
                 self.lambda_vars.add(name)
+            # Batch 32: `f = open(...)` — register f as a file variable.
+            if (isinstance(node.value, ast.Call)
+                    and isinstance(node.value.func, ast.Name)
+                    and node.value.func.id == "open"):
+                self.file_vars.add(name)
 
             # Normal variable assignment
             value = self.expr(node.value)
@@ -5038,6 +5108,9 @@ def transpile(source: str) -> str:
         '#include <iostream>',
         '#include <utility>',
         '#include <sstream>',
+        '#include <fstream>',
+        '#include <filesystem>',
+        '#include <memory>',
         '#include <iomanip>',
         '#include <vector>',
         '#include <map>',
@@ -5047,6 +5120,7 @@ def transpile(source: str) -> str:
         '#include <random>',
         '#include <chrono>',
         '#include <thread>',
+        '#include <set>',
         '#include <set>',
         '',
         "// Helper: format a double cleanly — no trailing zeros, no trailing dot.",
@@ -5511,6 +5585,75 @@ def transpile(source: str) -> str:
         "                                  std::inserter(out, out.begin()));",
         "    return out;",
         "}",
+        "",
+        "",
+        "// Batch 32: File I/O helper.",
+        "struct File {",
+        "    std::unique_ptr<std::fstream> stream;",
+        "    std::string mode;",
+        "    bool closed = false;",
+        "    File() : mode(\"\") {}",
+        "    File(const std::string& path, const std::string& m) : mode(m) {",
+        "        stream = std::make_unique<std::fstream>();",
+        "        if (m == \"r\" || m == \"rt\") {",
+        "            stream->open(path, std::ios::in);",
+        "            if (!stream->is_open()) {",
+        "                throw std::runtime_error(\"cannot open file for reading: \" + path);",
+        "            }",
+        "        } else if (m == \"w\" || m == \"wt\") {",
+        "            stream->open(path, std::ios::out | std::ios::trunc);",
+        "        } else if (m == \"a\" || m == \"at\") {",
+        "            stream->open(path, std::ios::out | std::ios::app);",
+        "        } else if (m == \"x\" || m == \"xt\") {",
+        "            if (std::filesystem::exists(path)) {",
+        "                throw std::runtime_error(\"file already exists: \" + path);",
+        "            }",
+        "            stream->open(path, std::ios::out);",
+        "        }",
+        "    }",
+        "    File(File&& other) noexcept",
+        "        : stream(std::move(other.stream)),",
+        "          mode(std::move(other.mode)),",
+        "          closed(other.closed) { other.closed = true; }",
+        "    File& operator=(File&& other) noexcept {",
+        "        if (this != &other) {",
+        "            stream = std::move(other.stream);",
+        "            mode = std::move(other.mode);",
+        "            closed = other.closed;",
+        "            other.closed = true;",
+        "        }",
+        "        return *this;",
+        "    }",
+        "    File(const File&) = delete;",
+        "    File& operator=(const File&) = delete;",
+        "    ~File() {",
+        "        if (!closed && stream && stream->is_open()) stream->close();",
+        "    }",
+        "    std::string read() {",
+        "        std::stringstream ss;",
+        "        ss << stream->rdbuf();",
+        "        return ss.str();",
+        "    }",
+        "    std::string read(int n) {",
+        "        std::string out;",
+        "        out.resize(n);",
+        "        stream->read(&out[0], n);",
+        "        out.resize(stream->gcount());",
+        "        return out;",
+        "    }",
+        "    std::string readline() {",
+        "        std::string line;",
+        "        std::getline(*stream, line);",
+        "        return line;",
+        "    }",
+        "    void write(const std::string& s) { *stream << s; }",
+        "    void close() {",
+        "        if (!closed && stream && stream->is_open()) {",
+        "            stream->close();",
+        "            closed = true;",
+        "        }",
+        "    }",
+        "};",
         "",
         '\n\n'.join(emitter.classes),
         '',
