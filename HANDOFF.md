@@ -3035,3 +3035,81 @@ actually emitted. That's the invariant.
   works because Pass 1 pre-pass and Pass 2 see the same `tree` object.
   If a future batch ever re-parses between passes, `id()` breaks.
   A name + line-number tuple would be more robust if this ever bites.
+
+## 64. Batch 29 — constructor functions (2026-10-17)
+
+### The feature
+
+Python's "Setting the Specific Data Type" table from the
+tutorial page — `list(...)`, `tuple(...)`, `set(...)`,
+`dict(...)`, `bool(...)` — is now supported.
+
+| Constructor | Emit |
+|-------------|------|
+| `list((a,b,c))` | `std::vector<T>{a,b,c}` |
+| `list([a,b,c])` | pass-through of `ast.List` |
+| `list(xs)` | `xs` (list variable) |
+| `tuple((a,b))` | `std::make_pair(a,b)` |
+| `tuple((a,b,c))` | `std::make_tuple(a,b,c)` |
+| `tuple([a,b])` | `std::make_pair(a,b)` |
+| `set((a,b,c))` | `std::set<int>{a,b,c}` |
+| `set([a,b,c])` | `std::set<int>{a,b,c}` |
+| `dict({...})` | pass-through of `ast.Dict` |
+| `bool(x)` | `(bool)(x)` |
+
+### The fix — two anchors in `kofty/transpiler.py`
+
+**A.** `_call_expr`, five new branches between the `float`
+branch (ends line 2276) and the `ptr` branch (starts 2278).
+Each accepts exactly 1 argument (except `bool` accepts 1),
+rejects 0-arg calls with a clear message. The `list`/`tuple`/
+`set` branches re-wrap a `Tuple`/`List` argument into a
+synthetic node (`ast.List`, `ast.Tuple`, `ast.Set`) and
+delegate to `self.expr()`, which reuses all existing literal
+emission logic — no new helpers, no preamble additions.
+
+**B.** `_BUILTIN_NAMES` (line 53) — added `"list", "tuple",
+"dict", "set"` so Batch 25's unbound-name check allows these
+names in non-call positions.
+
+### Design
+
+- **Delegation, not reimplementation.** The synthetic-node trick
+  means `list((1,2,3))` produces exactly the same C++ as
+  `[1, 2, 3]` written literally. No duplicate emission logic.
+- **Zero arguments raises.** `list()`, `tuple()`, `set()`,
+  `dict()` all raise — no element type to infer.
+- **`dict(a=1)` deferred.** Kwargs at call sites aren't
+  supported yet (Batch 5c was kwargs in *function definitions*).
+  `dict({...})` works; kwargs form raises a clear message.
+- **`set((1,2,3))` type annotation.** Emits `std::set<int>`
+  because `_emit_set_expr` currently hardcodes `int`. Heterogeneous
+  set constructors would need a follow-up.
+
+### Tests
+
+- `tests/test_batch29_transpile.py` — 17 tests, all passing
+- Transpile suite: **701 passing** (was 684; +17)
+- `check.py`: 89 Python files parse cleanly
+
+### Verified demo
+
+    fruits = list(("apple", "banana", "cherry"))
+    print(fruits)
+
+Emits:
+
+    auto fruits = std::vector<std::string>{"apple", "banana", "cherry"};
+    std::cout << is_to_string(fruits) << std::endl;
+
+### Commit
+
+    6362bf3 (+ amend for _BUILTIN_NAMES)
+
+### Known follow-ups
+
+- **Batch 29.1:** `dict(a=1, b=2)` — needs kwargs call-site support.
+- **Batch 29.2:** `set((1, "a"))` — heterogeneous set element types
+  (blocked by `_emit_set_expr` hardcoding `std::set<int>`).
+- **Batch 29.3:** `list()` / `set()` zero-arg forms with type
+  annotation: `xs: list[int] = list()`.
