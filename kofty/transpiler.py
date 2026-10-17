@@ -44,6 +44,42 @@ CORE_BUILTINS = {
     # (print, str, int, float, len, vec2, ptr are all special-cased.)
 }
 
+# ---- Batch 25: names that are always in scope ----
+# Every name Kofty recognizes as a builtin, constant, or importable module.
+# Any Name not in this set, and not bound anywhere in the source, raises
+# TranspileError at expression-emission time.
+_BUILTIN_NAMES: set = {
+    # Builtin functions (dispatched in _call_expr)
+    "print", "input", "str", "int", "float", "bool", "len",
+    "vec2", "ptr",
+    # Builtin functions that only appear in for-loop iter position
+    "range", "enumerate", "zip",
+    # Meta
+    "super",
+    # Constants (also handled as ast.Constant in some paths)
+    "True", "False", "None",
+    # Module names — valid as `Name` when followed by an Attribute
+    "math", "random", "time", "raylib",
+}
+# ---- Batch 25: raylib constants (only in scope when `import raylib`) ----
+_RAYLIB_CONSTANTS: set = {
+    "KEY_LEFT", "KEY_RIGHT", "KEY_UP", "KEY_DOWN", "KEY_SPACE",
+    "KEY_ENTER", "KEY_ESCAPE", "KEY_BACKSPACE", "KEY_TAB",
+    "MOUSE_BUTTON_LEFT", "MOUSE_BUTTON_RIGHT", "MOUSE_BUTTON_MIDDLE",
+}
+# ---- Batch 25: raylib constants (only in scope when `import raylib`) ----
+_RAYLIB_CONSTANTS: set = {
+    "KEY_LEFT", "KEY_RIGHT", "KEY_UP", "KEY_DOWN", "KEY_SPACE",
+    "KEY_ENTER", "KEY_ESCAPE", "KEY_BACKSPACE", "KEY_TAB",
+    "MOUSE_BUTTON_LEFT", "MOUSE_BUTTON_RIGHT", "MOUSE_BUTTON_MIDDLE",
+}
+# ---- Batch 25: raylib constants (only in scope when `import raylib`) ----
+_RAYLIB_CONSTANTS: set = {
+    "KEY_LEFT", "KEY_RIGHT", "KEY_UP", "KEY_DOWN", "KEY_SPACE",
+    "KEY_ENTER", "KEY_ESCAPE",
+    "MOUSE_BUTTON_LEFT", "MOUSE_BUTTON_RIGHT", "MOUSE_BUTTON_MIDDLE",
+}
+
 # ---- Raylib builtins (only available when `import raylib` is present) ----
 RAYLIB_BUILTINS = {
     # Window / lifecycle
@@ -125,6 +161,10 @@ class CppEmitter(ast.NodeVisitor):
         self.declared: set = set()  # variable names already declared in current scope
         self.classes: List[str] = []  # class definitions emitted separately
         self.user_classes: set = set()
+        # Batch 25: every name bound anywhere in the source (assign targets,
+        # for-loop targets, function params, import aliases, def/class names).
+        # Populated by _collect_bound_names() in transpile().
+        self.all_bound_names: set = set()
         # Batch 11c.1: name -> element C++ type (was a set before).
         # e.g. 'int', 'std::string', 'std::pair<int, int>'. The
         # presence of a name still means 'this is a list'.
@@ -467,8 +507,23 @@ class CppEmitter(ast.NodeVisitor):
             raise TranspileError(f"Unsupported constant: {node.value!r}")
 
         if isinstance(node, ast.Name):
+            # Batch 25: reject names that aren't bound anywhere in the
+            # source. Lenient (whole-file analysis): a name used before
+            # it's assigned is allowed, matching Python's behavior for
+            # module-level forward references.
+            _nm = node.id
+            if (
+                _nm not in _BUILTIN_NAMES
+                and _nm not in self.all_bound_names
+                and _nm not in self.user_funcs
+                and _nm not in self.user_classes
+                and _nm not in self.declared
+                and _nm not in self.instance_vars
+                and _nm not in self.global_vars
+                and _nm not in self.lambda_vars
+            ):
+                raise TranspileError(f"name '{_nm}' is not defined")
             return node.id
-
         if isinstance(node, ast.JoinedStr):
             # f-string: JoinStr values are Constant (literal text)
             # or FormattedValue (an embedded expression).
@@ -4218,6 +4273,59 @@ class CppEmitter(ast.NodeVisitor):
 
     def generic_visit(self, node):
         raise TranspileError(f"Unsupported syntax: {type(node).__name__}")
+def _collect_bound_names(tree) -> set:
+    """Batch 25: return the set of every name bound anywhere in the AST.
+
+    Lenient — this is a whole-file analysis. A name used before it's
+    assigned is allowed, matching Python's behavior for module-level
+    forward references. Strict ordering is a future batch.
+    """
+    names: set = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.Assign, ast.AugAssign, ast.AnnAssign)):
+            targets = getattr(node, "targets", None) or [node.target]
+            for tgt in targets:
+                for sub in ast.walk(tgt):
+                    if isinstance(sub, ast.Name):
+                        names.add(sub.id)
+        elif isinstance(node, ast.For):
+            for sub in ast.walk(node.target):
+                if isinstance(sub, ast.Name):
+                    names.add(sub.id)
+        elif isinstance(node, ast.With):
+            for item in node.items:
+                if item.optional_vars is not None:
+                    for sub in ast.walk(item.optional_vars):
+                        if isinstance(sub, ast.Name):
+                            names.add(sub.id)
+        elif isinstance(node, ast.FunctionDef):
+            names.add(node.name)
+            a = node.args
+            for arg in (a.posonlyargs + a.args + a.kwonlyargs):
+                names.add(arg.arg)
+            if a.vararg is not None:
+                names.add(a.vararg.arg)
+            if a.kwarg is not None:
+                names.add(a.kwarg.arg)
+        elif isinstance(node, ast.ClassDef):
+            names.add(node.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                names.add(alias.asname or alias.name.split(".")[0])
+                if alias.name == "raylib":
+                    names.update(_RAYLIB_CONSTANTS)
+        elif isinstance(node, ast.ExceptHandler):
+            if node.name:
+                names.add(node.name)
+        elif isinstance(node, ast.Lambda):
+            a = node.args
+            for arg in (a.posonlyargs + a.args + a.kwonlyargs):
+                names.add(arg.arg)
+            if a.vararg is not None:
+                names.add(a.vararg.arg)
+            if a.kwarg is not None:
+                names.add(a.kwarg.arg)
+    return names
 
 def _literal_cpp_type(node):
     """Batch 13h: return the C++ type of a literal-shaped AST node,
@@ -4387,6 +4495,8 @@ def transpile(source: str) -> str:
     for node in tree.body:
         if isinstance(node, (ast.Import, ast.ImportFrom)):
             emitter.visit(node)
+    # Batch 25: whole-file bound-name collection.
+    emitter.all_bound_names = _collect_bound_names(tree)
     for node in tree.body:
         if isinstance(node, ast.FunctionDef):
             emitter.user_funcs.add(node.name)
@@ -4422,6 +4532,8 @@ def transpile(source: str) -> str:
     # Batch 13h: whole-program ctor-arg type inference. Scan every
     # ClassName(...) call for literal-typed args and unify per
     # (class, position). Consumed by visit_ClassDef below.
+    # Batch 25: whole-file bound-name collection.
+    emitter.all_bound_names = _collect_bound_names(tree)
     emitter.class_ctor_arg_types = _scan_ctor_arg_types(
         tree, emitter.user_classes
     )

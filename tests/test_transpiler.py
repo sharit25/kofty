@@ -117,35 +117,35 @@ def test_string_plus_number():
     )
     assert 'auto msg = (std::string("Score: ") + format_float(score));' in out
 def test_boolean_and():
-    out = transpile("x = a and b")
+    out = transpile("a = True\nb = False\nx = a and b")
     assert "auto x = (a && b);" in out
 
 
 def test_boolean_or():
-    out = transpile("x = a or b")
+    out = transpile("a = True\nb = False\nx = a or b")
     assert "auto x = (a || b);" in out
 
 
 def test_boolean_not():
-    out = transpile("x = not a")
+    out = transpile("a = True\nx = not a")
     assert "auto x = (!a);" in out
 
 def test_boolean_and_three_operands():
-    out = transpile("x = a and b and c")
+    out = transpile("a = True\nb = False\nc = True\nx = a and b and c")
     assert "auto x = (a && b && c);" in out
 
 
 def test_boolean_and_with_comparisons():
-    out = transpile("x = a > 0 and b < 10")
+    out = transpile("a = 5\nb = 5\nx = a > 0 and b < 10")
     assert "auto x = ((a > 0) && (b < 10));" in out
 
 def test_keyboard_constant_passthrough():
-    out = transpile("x = is_key_down(KEY_LEFT)")
+    out = transpile("import raylib\nx = is_key_down(KEY_LEFT)")
     assert "auto x = IsKeyDown(KEY_LEFT);" in out
 
 
 def test_keyboard_constant_space():
-    out = transpile("x = is_key_down(KEY_SPACE)")
+    out = transpile("import raylib\nx = is_key_down(KEY_SPACE)")
     assert "auto x = IsKeyDown(KEY_SPACE);" in out
 
 def test_rects_overlap():
@@ -326,12 +326,12 @@ def test_augassign_divide_equals():
     assert "x /= 2;" in out
 
 def test_mouse_button_left_passthrough():
-    out = transpile("x = is_mouse_down(MOUSE_BUTTON_LEFT)")
+    out = transpile("import raylib\nx = is_mouse_down(MOUSE_BUTTON_LEFT)")
     assert "auto x = IsMouseButtonDown(MOUSE_BUTTON_LEFT);" in out
 
 
 def test_mouse_button_right_passthrough():
-    out = transpile("x = is_mouse_down(MOUSE_BUTTON_RIGHT)")
+    out = transpile("import raylib\nx = is_mouse_down(MOUSE_BUTTON_RIGHT)")
     assert "auto x = IsMouseButtonDown(MOUSE_BUTTON_RIGHT);" in out
 
 def test_break_in_loop():
@@ -483,7 +483,7 @@ def test_string_variable_can_be_reassigned():
     assert 'auto display = std::string("0");' in out
     assert "display = format_float(42);" in out
 def test_mouse_pressed_passthrough():
-    out = transpile("x = is_mouse_pressed(MOUSE_BUTTON_LEFT)")
+    out = transpile("import raylib\nx = is_mouse_pressed(MOUSE_BUTTON_LEFT)")
     assert "auto x = IsMouseButtonPressed(MOUSE_BUTTON_LEFT);" in out
 
 def test_float_literal():
