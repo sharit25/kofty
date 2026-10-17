@@ -503,8 +503,10 @@ class CppEmitter(ast.NodeVisitor):
             if node.value is None:
                 return "nullptr"
             if isinstance(node.value, str):
-                # Escape quotes/backslashes for C++ string literal
+                # Escape quotes, backslashes, and control chars for C++.
                 s = node.value.replace("\\", "\\\\").replace('"', '\\"')
+                s = s.replace("\n", "\\n").replace("\r", "\\r").replace("\t", "\\t")
+                s = s.replace("\0", "\\0")
                 return f'"{s}"'
             if isinstance(node.value, bool):
                 return "true" if node.value else "false"
@@ -865,13 +867,13 @@ class CppEmitter(ast.NodeVisitor):
             # Literal lists only. Element types supported:
             #   scalars         → std::vector<T>
             #   tuples (N >= 2) → std::vector<std::pair<..>> (N=2)
-            #                     or std::vector<std::tuple<..>> (N>=3)
+            #                   or std::vector<std::tuple<..>> (N>=3)
             # Empty lists and nested lists are rejected.
+            # Batch 33: empty list literals allowed. Emit as std::vector<int>
+            # by default. Real element type is determined at assignment time
+            # by visit_Assign + the empty-list inference pre-pass.
             if len(node.elts) == 0:
-                raise TranspileError(
-                    "empty list literals are not supported (no type to "
-                    "infer). Add at least one element."
-                )
+                return "std::vector<int>{}"
 
             def _unwrap_sign(elt):
                 if (isinstance(elt, ast.UnaryOp)
@@ -2868,6 +2870,15 @@ class CppEmitter(ast.NodeVisitor):
             elif name in self.declared:
                 self.emit(f"{name} = {value};")
             else:
+                # Batch 33: `xs = []` — use inferred element type from
+                # empty_list_types dict (populated by pre-pass in transpile()).
+                if (isinstance(node.value, ast.List)
+                        and len(node.value.elts) == 0):
+                    _et = self.empty_list_types.get(name, "int")
+                    self.emit(f"auto {name} = std::vector<{_et}>{{}};")
+                    self.declared.add(name)
+                    self.list_vars[name] = _et
+                    return
                 self.emit(f"auto {name} = {value};")
                 self.declared.add(name)
                 if isinstance(node.value, ast.List):
@@ -2898,7 +2909,6 @@ class CppEmitter(ast.NodeVisitor):
                             elif isinstance(v, str): _et = "std::string"
                     self.list_vars[name] = _et
             return
-
         # Case 1b: tuple-unpacking target — `a, b = value` (or N>=3)
         if isinstance(target, ast.Tuple):
             if len(target.elts) < 2:
@@ -3537,6 +3547,19 @@ class CppEmitter(ast.NodeVisitor):
             self.emit("}")
             return
 
+        # Batch 33: `for x in <expr>.split(sep):` — inline call result.
+        if (isinstance(node.iter, ast.Call)
+                and isinstance(node.iter.func, ast.Attribute)
+                and node.iter.func.attr == "split"):
+            _inner = self.expr(node.iter)
+            self.emit(f"for (auto {var} : {_inner}) {{")
+            self.indent += 1
+            self.declared.add(var)
+            for stmt in node.body:
+                self.visit(stmt)
+            self.indent -= 1
+            self.emit("}")
+            return
         # Case 3: `for x in <unknown name>` — could be a function parameter
         # of unknown type, or a variable we can't prove is a list.
         # Emit `for (auto x : name)` and let g++ verify.
@@ -4500,6 +4523,65 @@ def _collect_bound_names(tree) -> set:
                 names.add(a.kwarg.arg)
     return names
 
+def _infer_empty_list_elem_type(body, target_name):
+    """Batch 33: infer element type of `target = []` by scanning `body`
+    for `target.append(<expr>)` calls.
+    """
+    loop_var_types = {}
+
+    def _walk(stmts, lv):
+        for stmt in stmts:
+            if isinstance(stmt, ast.For) and isinstance(stmt.target, ast.Name):
+                new_lv = dict(lv)
+                if isinstance(stmt.iter, ast.Name):
+                    if stmt.iter.id in lv:
+                        new_lv[stmt.target.id] = lv[stmt.iter.id]
+                elif (isinstance(stmt.iter, ast.Call)
+                        and isinstance(stmt.iter.func, ast.Attribute)
+                        and stmt.iter.func.attr == "split"):
+                    new_lv[stmt.target.id] = "std::string"
+                r = _walk(stmt.body, new_lv)
+                if r is not None:
+                    return r
+                r = _walk(stmt.orelse, new_lv)
+                if r is not None:
+                    return r
+                continue
+
+            if (isinstance(stmt, ast.Expr)
+                    and isinstance(stmt.value, ast.Call)
+                    and isinstance(stmt.value.func, ast.Attribute)
+                    and stmt.value.func.attr == "append"
+                    and isinstance(stmt.value.func.value, ast.Name)
+                    and stmt.value.func.value.id == target_name
+                    and stmt.value.args):
+                arg = stmt.value.args[0]
+                if isinstance(arg, ast.Constant):
+                    v = arg.value
+                    if isinstance(v, bool):
+                        return "bool"
+                    if isinstance(v, int):
+                        return "int"
+                    if isinstance(v, float):
+                        return "double"
+                    if isinstance(v, str):
+                        return "std::string"
+                if isinstance(arg, ast.Name) and arg.id in lv:
+                    return lv[arg.id]
+                return "int"
+
+            for field in ("body", "orelse", "handlers", "finalbody"):
+                sub = getattr(stmt, field, None)
+                if isinstance(sub, list):
+                    r = _walk(sub, lv)
+                    if r is not None:
+                        return r
+
+        return None
+
+    result = _walk(body, loop_var_types)
+    return result if result is not None else "int"
+
 def _literal_cpp_type(node):
     """Batch 13h: return the C++ type of a literal-shaped AST node,
     or None if the node isn't a compile-time-known scalar literal."""
@@ -4658,7 +4740,25 @@ def transpile(source: str) -> str:
     # Pass 1: register user function names and class names so calls resolve.
     # Pass 1: register user function names, class names, and inheritance info.
     emitter = CppEmitter()
-        # Pass 1.5: register all top-level imports BEFORE emitting any
+    # Batch 33: infer element types for empty list literals.
+    # For each function body (and module scope), find `xs = []` assignments
+    # and infer xs's element type from the first `xs.append(<expr>)` call.
+    emitter.empty_list_types = {}
+    for _scope_node in [tree] + [
+        n for n in tree.body if isinstance(n, ast.FunctionDef)
+    ]:
+        _body = _scope_node.body if isinstance(_scope_node, ast.FunctionDef) else tree.body
+        for _stmt in _body:
+            if (isinstance(_stmt, ast.Assign)
+                    and len(_stmt.targets) == 1
+                    and isinstance(_stmt.targets[0], ast.Name)
+                    and isinstance(_stmt.value, ast.List)
+                    and len(_stmt.value.elts) == 0):
+                _lname = _stmt.targets[0].id
+                emitter.empty_list_types[_lname] = _infer_empty_list_elem_type(
+                    _body, _lname
+                )
+    # Pass 1.5: register all top-level imports BEFORE emitting any
     # class or function bodies. visit_Import only sets
     # emitter.imported_modules; the flag is read by expr()/_call_expr
     # for gating `math.X`, `random.X`, `time.X`. Previously this ran

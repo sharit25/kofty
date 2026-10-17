@@ -610,10 +610,6 @@ def test_len_builtin():
     )
     assert "auto n = xs.size();" in out
 
-def test_empty_list_raises():
-    with pytest.raises(TranspileError, match="empty list"):
-        transpile("xs = []")
-
 def test_list_append_int():
     out = transpile(
         "xs = [1, 2, 3]\n"

@@ -1,0 +1,85 @@
+TODOS_FILE = "todo.txt"
+
+def load_todos():
+    items = []
+    try:
+        f = open(TODOS_FILE, "r")
+        content = f.read()
+        f.close()
+        for line in content.split("\n"):
+            if line != "":
+                items.append(line)
+    except Exception:
+        pass
+    return items
+
+def save_todos(items):
+    f = open(TODOS_FILE, "w")
+    for item in items:
+        f.write(item + "\n")
+    f.close()
+
+def show_todos(items):
+    print("")
+    print("=" * 40)
+    if len(items) == 0:
+        print("No todos yet.")
+    else:
+        for i in range(len(items)):
+            print(str(i + 1) + ". " + items[i])
+    print("=" * 40)
+    print("")
+
+def add_todo(items):
+    text = input("New todo: ")
+    text = text.strip()
+    if text == "":
+        print("Empty, ignored.")
+        return
+    items.append(text)
+    save_todos(items)
+    print("Added: " + text)
+
+def remove_todo(items):
+    show_todos(items)
+    raw = input("Remove # (blank to cancel): ")
+    raw = raw.strip()
+    if raw == "":
+        return
+    n = 0
+    try:
+        n = int(raw)
+    except Exception:
+        print("Not a number.")
+        return
+    if n < 1 or n > len(items):
+        print("Out of range.")
+        return
+    removed = items.pop(n - 1)
+    save_todos(items)
+    print("Removed: " + removed)
+
+def run():
+    items = load_todos()
+    print("Kofty Todo List")
+    while True:
+        print("")
+        print("  1. List")
+        print("  2. Add")
+        print("  3. Remove")
+        print("  4. Quit")
+        choice = input("Choice: ")
+        choice = choice.strip().lower()
+        if choice == "1" or choice == "list":
+            show_todos(items)
+        elif choice == "2" or choice == "add":
+            add_todo(items)
+        elif choice == "3" or choice == "remove":
+            remove_todo(items)
+        elif choice == "4" or choice == "quit" or choice == "q":
+            print("Bye.")
+            return
+        else:
+            print("Unknown choice.")
+
+run()
