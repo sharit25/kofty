@@ -1533,6 +1533,22 @@ class CppEmitter(ast.NodeVisitor):
             if len(elts) == 2:
                 return f"std::pair<{elts[0]}, {elts[1]}>"
             return f"std::tuple<{', '.join(elts)}>"
+        # Batch 28: dict literal — values must be homogeneous
+        if isinstance(node, ast.Dict):
+            if len(node.values) == 0:
+                return None
+            vtypes = [self._infer_expr_type(v) for v in node.values]
+            if any(t is None for t in vtypes):
+                return None
+            if len(set(vtypes)) > 1:
+                return None
+            return f"std::map<std::string, {vtypes[0]}>"
+        # Batch 28: set literal — always int per current emitter
+        if isinstance(node, ast.Set):
+            if len(node.elts) == 0:
+                return None
+            # Mirrors _emit_set_expr's hardcoded int element type
+            return "std::set<int>"
         # self.<field> read
         if (isinstance(node, ast.Attribute)
                 and isinstance(node.value, ast.Name)
@@ -4755,6 +4771,7 @@ def transpile(source: str) -> str:
             _t = emitter._infer_expr_type(_stmt.value)
             if _t in _HOISTABLE:
                 _global_implied_types[_tname] = _t
+
     for _node in tree.body:
         if not isinstance(_node, ast.Assign):
             continue
@@ -4768,6 +4785,90 @@ def transpile(source: str) -> str:
         _gtype = emitter._infer_expr_type(_node.value)
         if _gtype in _HOISTABLE:
             emitter.global_vars[_gname] = _gtype
+            continue
+        # Batch 28: hoist containers read from functions. Populate the
+        # container-tracking dicts so print()/str()/iteration dispatch
+        # inside functions resolves correctly.
+        if _gtype is None:
+            continue
+        if _gtype.startswith("std::vector<"):
+            emitter.global_vars[_gname] = _gtype
+            emitter.list_vars[_gname] = _gtype[len("std::vector<"):-1]
+        elif _gtype.startswith("std::map<"):
+            emitter.global_vars[_gname] = _gtype
+            _inner = _gtype[len("std::map<"):-1]
+            _depth = 0
+            for _i, _c in enumerate(_inner):
+                if _c == '<':
+                    _depth += 1
+                elif _c == '>':
+                    _depth -= 1
+                elif _c == ',' and _depth == 0:
+                    emitter.dict_vars[_gname] = _inner[_i + 2:].strip()
+                    break
+        elif _gtype.startswith("std::set<"):
+            emitter.global_vars[_gname] = _gtype
+            emitter.set_vars[_gname] = _gtype[len("std::set<"):-1]
+        elif _gtype.startswith("std::pair<") or _gtype.startswith("std::tuple<"):
+            emitter.global_vars[_gname] = _gtype
+            _inner = _gtype[_gtype.index('<') + 1:-1]
+            _depth = 0
+            _commas = 0
+            for _c in _inner:
+                if _c == '<':
+                    _depth += 1
+                elif _c == '>':
+                    _depth -= 1
+                elif _c == ',' and _depth == 0:
+                    _commas += 1
+            emitter.tuple_vars[_gname] = _commas + 1
+            continue
+        # Batch 28: hoist module-level containers too, if _infer_expr_type
+        # gave us a C++ container type. Register the container kind so
+        # print()/str()/iteration dispatch inside functions works.
+        if _gtype is not None and (
+            _gtype.startswith("std::vector<")
+            or _gtype.startswith("std::map<")
+            or _gtype.startswith("std::set<")
+            or _gtype.startswith("std::pair<")
+            or _gtype.startswith("std::tuple<")
+        ):
+            emitter.global_vars[_gname] = _gtype
+            # Populate container-tracking so print(xs) inside a function
+            # dispatches to repr_vector etc.
+            if _gtype.startswith("std::vector<"):
+                _elem = _gtype[len("std::vector<"):-1]
+                emitter.list_vars[_gname] = _elem
+            elif _gtype.startswith("std::map<"):
+                # map<K, V> — extract V
+                _inner = _gtype[len("std::map<"):-1]
+                _depth = 0
+                _v_start = None
+                for _i, _c in enumerate(_inner):
+                    if _c == '<':
+                        _depth += 1
+                    elif _c == '>':
+                        _depth -= 1
+                    elif _c == ',' and _depth == 0:
+                        _v_start = _i + 2
+                        break
+                if _v_start is not None:
+                    emitter.dict_vars[_gname] = _inner[_v_start:].strip()
+            elif _gtype.startswith("std::set<"):
+                emitter.set_vars[_gname] = _gtype[len("std::set<"):-1]
+            elif _gtype.startswith("std::pair<") or _gtype.startswith("std::tuple<"):
+                # Approximate arity: count top-level commas + 1
+                _inner = _gtype[_gtype.index('<') + 1:-1]
+                _depth = 0
+                _commas = 0
+                for _c in _inner:
+                    if _c == '<':
+                        _depth += 1
+                    elif _c == '>':
+                        _depth -= 1
+                    elif _c == ',' and _depth == 0:
+                        _commas += 1
+                emitter.tuple_vars[_gname] = _commas + 1
     # Batch 24.1: hoist names whose only assignment is inside a
     # function that declares them `global`.
     for _gname, _gtype in _global_implied_types.items():

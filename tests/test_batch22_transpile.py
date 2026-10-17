@@ -40,8 +40,9 @@ print(x)
     assert "auto x = 42;" in main
 
 
-def test_list_NOT_hoisted_even_if_read():
-    # Containers stay local — no hoist yet.
+def test_list_IS_hoisted_after_batch28():
+    # Batch 28: containers are now hoisted when read from functions.
+    # (Before Batch 28, this test asserted `not in` — see git history.)
     out = transpile('''
 xs = [1, 2, 3]
 
@@ -50,6 +51,5 @@ def show():
 
 show()
 ''')
-    # No global declaration for xs.
     before_main = out.split("int main()")[0]
-    assert "std::vector<int> xs;" not in before_main
+    assert "std::vector<int> xs;" in before_main
