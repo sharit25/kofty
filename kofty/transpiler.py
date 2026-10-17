@@ -51,6 +51,7 @@ CORE_BUILTINS = {
 _BUILTIN_NAMES: set = {
     # Builtin functions (dispatched in _call_expr)
     "print", "input", "str", "int", "float", "bool", "len",
+    "list", "tuple", "dict", "set",
     "vec2", "ptr",
     # Builtin functions that only appear in for-loop iter position
     "range", "enumerate", "zip",
