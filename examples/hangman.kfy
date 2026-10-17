@@ -1,0 +1,61 @@
+import random
+
+WORDS = ["apple", "banana", "cherry", "durian", "elderberry"]
+MAX_WRONG = 6
+
+def choose_word():
+    return random.choice(WORDS)
+
+def display_word(word, guessed):
+    result = ""
+    for letter in word:
+        if guessed.find(letter) >= 0:
+            result += letter
+        else:
+            result += "_"
+        result += " "
+    return result
+
+def is_won(word, guessed):
+    for letter in word:
+        if guessed.find(letter) < 0:
+            return False
+    return True
+
+def play_hangman():
+    word = choose_word()
+    guessed = ""
+    wrong = 0
+
+    print("=" * 40)
+    print("Welcome to Hangman!")
+    print("=" * 40)
+
+    while wrong < MAX_WRONG:
+        print()
+        print(display_word(word, guessed))
+        print("Wrong guesses: " + str(wrong) + " / " + str(MAX_WRONG))
+
+        guess = input("Guess a letter: ")
+        guess = guess.lower()
+
+        if guessed.find(guess) >= 0:
+            print("You already guessed that.")
+            continue
+
+        guessed += guess
+
+        if word.find(guess) >= 0:
+            print("Good guess!")
+            if is_won(word, guessed):
+                print(display_word(word, guessed))
+                print("You won! The word was: " + word)
+                return
+        else:
+            wrong += 1
+            print("Wrong!")
+
+    print()
+    print("Out of guesses. The word was: " + word)
+
+play_hangman()

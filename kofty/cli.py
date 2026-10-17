@@ -16,8 +16,11 @@ from pathlib import Path
 
 from .transpiler import transpile, TranspileError
 
-
-VERSION = "0.1.0"
+from importlib.metadata import version as _pkg_version
+try:
+    VERSION = _pkg_version("kofty")
+except Exception:
+    VERSION = "0.0.0-dev"
 
 _TASKS_JSON = """\
 {
