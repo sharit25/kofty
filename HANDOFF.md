@@ -2957,3 +2957,81 @@ a change from pre-Batch-25 fixtures.
 - **Batch 27 (next):** function redefinition. Currently `def f():`
   twice emits two C++ functions with the same name; g++ errors.
   Python semantics: later definition wins.
+
+## 63.1 Batch 27 — keep last def on duplicate function names (2026-10-17)
+
+### The gap
+
+Python allows `def f():` twice in one file — the later def wins.
+Before Batch 27, Kofty emitted **both** C++ functions:
+
+    auto f() { ...first body... }
+    auto f() { ...second body... }
+
+g++ rejected the translation unit with `redefinition of 'auto f()'`.
+The tester's original `allcheck.kfy` hit this — see §62.
+
+### The fix — four anchors in `kofty/transpiler.py`
+
+**A.** `CppEmitter.__init__` (line ~147):
+    self.shadowed_funcs: set = set()   # ids of earlier defs to skip
+
+**B.** Pass 1 pre-pass after `_scan_ctor_arg_types` (line ~4544):
+    _defs_by_name: dict = {}
+    for _node in tree.body:
+        if isinstance(_node, ast.FunctionDef):
+            _defs_by_name.setdefault(_node.name, []).append(_node)
+    for _name, _defs in _defs_by_name.items():
+        if len(_defs) > 1:
+            for _earlier in _defs[:-1]:
+                emitter.shadowed_funcs.add(id(_earlier))
+
+**C.** Pass 2, inside `elif isinstance(node, ast.FunctionDef):`
+(line ~4819), before `emitter.visit(node)`:
+    if id(node) in emitter.shadowed_funcs:
+        continue
+
+**D.** `visit_FunctionDef`, right after `_check_name` (line ~3493):
+    if id(node) in self.shadowed_funcs:
+        return
+
+### Design
+
+- **Keep-last**, matching Python semantics. Not a raise, not keep-first.
+- **`id()` identity**, not name-based — the AST nodes are the ground truth.
+- **Anchor C is the load-bearing one.** Without it, the set is populated
+  and never read — Pass 2 emits both.
+- **Anchor D is belt-and-suspenders.** It only fires if someone calls
+  `emitter.visit(fn)` directly outside Pass 2.
+
+### Tests
+
+- `tests/test_batch27_transpile.py` — 7 tests, all passing
+- Transpile suite: **684 passing** (was 677; +7)
+- `check.py`: 89 Python files parse cleanly
+
+### Test-writing lesson
+
+**Substring assertions catch more than intended.** Initial draft had:
+
+    assert "first" not in out
+
+`"first"` matched `a.first` inside `vec2_add` in the preamble. Same for
+`"one"` inside `reads one line from stdin` in `input_line`. Fix: assert
+on the **specific emission form**:
+
+    assert 'to_string("first")' not in out
+
+`to_string("first")` only appears if the `print("first")` body was
+actually emitted. That's the invariant.
+
+### Commit
+
+    fa0bfc6
+
+### Known follow-up
+
+- **Batch 27.1 (future, optional):** the check is `id()`-based, which
+  works because Pass 1 pre-pass and Pass 2 see the same `tree` object.
+  If a future batch ever re-parses between passes, `id()` breaks.
+  A name + line-number tuple would be more robust if this ever bites.
