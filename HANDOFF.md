@@ -3510,3 +3510,388 @@ at call site:
 
 Or (transpiler fix): pass list params by reference
 (`std::vector<T>& items` instead of `std::vector<T> items`).
+
+## 68. Batch 34 + 35 — empty dict literals + sorted() (2026-10-18)
+
+### Batch 34 — empty dict literals
+
+`d = {}` is now allowed. Value type inferred from first `d[key] = <expr>`
+assignment in the enclosing scope.
+
+**New helper** `_infer_empty_dict_value_type(body, target_name)` — walks
+the scope looking for `<target>[<key>] = <expr>`. Handles:
+- `<expr>` is a literal → its C++ type
+- `<expr>` is a name from loop-var types → that var's type
+- `<expr>` is `<x> + <y>` BinOp → wider of the two operand types
+- otherwise → `"int"` fallback
+
+**Pre-pass** in `transpile()` populates `emitter.empty_dict_types`. Same
+pattern as Batch 33's `empty_list_types`.
+
+**Anchor points:**
+- `_infer_empty_dict_value_type` — new function before `_infer_empty_list_elem_type`
+- `expr()` empty-dict guard (line ~979) — changed from `raise` to
+  `return "std::map<std::string, int>{}"`
+- `visit_Assign` — new empty-dict case in the `else:` branch (mirrors empty-list case)
+- `transpile()` — new pre-pass block after the empty-list pre-pass
+
+**`test_empty_dict_raises` deleted** from `tests/test_transpiler.py` (line 1459).
+Was asserting the pre-Batch-34 limitation.
+
+### Batch 35 — sorted(xs)
+
+`sorted(xs)` returns a sorted copy of a list.
+
+**New preamble helper**:
+    template <typename T>
+    std::vector<T> sorted_helper(const std::vector<T>& xs) {
+        std::vector<T> out = xs;
+        std::sort(out.begin(), out.end());
+        return out;
+    }
+
+**New dispatch** in `_call_expr`: `if name == "sorted": return f"sorted_helper({args[0]})"`
+
+**Scope:** 1-argument form only. No `reverse=`, no `key=`. Both are
+Batch 35.1 candidates.
+
+### examples/wordfreq.kfy — word frequency counter
+
+Working example:
+    f = open("examples/input.txt", "r")
+    content = f.read()
+    f.close()
+
+    words = content.lower().split(" ")
+
+    counts = {}
+    for w in words:
+        w = w.strip()
+        if w == "":
+            continue
+        if w in counts:
+            counts[w] = counts[w] + 1
+        else:
+            counts[w] = 1
+
+    for w in counts:
+        print(w + ": " + str(counts[w]))
+
+Output for `examples/input.txt`:
+    brown: 1
+    dog: 1
+    fox: 2
+    is: 1
+    jumps: 1
+    lazy: 1
+    over: 1
+    quick: 2
+    the: 2
+
+Notice: `std::map` sorts by key. Fine for this demo.
+
+**BOM caveat:** `examples/input.txt` was created with `Set-Content -Encoding utf8`
+(PowerShell default), which writes a UTF-8 BOM. Running the counter on that
+file produces `∩╗┐the: 1` as an extra "word" — the BOM is treated as part of
+the first word.
+
+**Fix for Batch 32.1:** `File::read()` should strip a UTF-8 BOM if present:
+    if (content.size() >= 3
+        && (unsigned char)content[0] == 0xEF
+        && (unsigned char)content[1] == 0xBB
+        && (unsigned char)content[2] == 0xBF) {
+        content = content.substr(3);
+    }
+
+For now, recreate `input.txt` without BOM:
+    [System.IO.File]::WriteAllText($path, $content, [System.Text.UTF8Encoding]::new($false))
+
+### Commits this session
+
+    e2cca71  ...  (previous session's last)
+    8d1428c  Batch 34+35: empty dict literals; sorted(); word frequency example
+    78422fb  Bump version to 0.4.2
+
+### Released as v0.4.2
+
+    https://github.com/sharit25/kofty/releases/tag/v0.4.2
+
+### Test counts
+
+- Transpile suite: 709 passing (deleted `test_empty_dict_raises`)
+- `check.py` clean (91 files)
+- `examples/todo.kfy` — builds and runs end-to-end
+- `examples/wordfreq.kfy` — builds and runs end-to-end
+
+### What's next for a new session
+
+Three independent tracks, any of which is valid:
+
+1. **More real programs** (proves current state):
+   - Calculator REPL — should work today
+   - Quiz game — should work today
+   - Text adventure — needs nested containers (defer)
+
+2. **Polish existing features**:
+   - Batch 32.1 — `with open()` statement, `import os`, `for line in f:`, BOM stripping
+   - Batch 35.1 — `sorted(xs, reverse=True)`, `sorted(xs, key=...)`
+   - Batch 34.1 — `d.items()` iteration, `d.keys()`, `d.values()`
+
+3. **Bigger lifts** (only if a tester asks):
+   - Nested containers (list of lists, dict of dicts) — weeks
+   - List comprehensions — weeks
+   - `list(xs)` where `xs` is a variable — small
+
+**Recommendation:** write the calculator REPL next. It proves the current
+language state works for a non-trivial program, and no new batches needed.
+
+## 69. Batch 40 — user-module imports for kofty-gui (2026-10-18)
+
+### Status: 90% complete, one bug remains
+
+### Done
+
+- **`_collect_user_modules(tree)`** helper at line 4705 of `kofty/transpiler.py` —
+  walks the AST, returns set of non-builtin module names. **Working** (verified
+  standalone: `_collect_user_modules(ast.parse('from kofty_gui import window'))`
+  returns `{'kofty_gui'}`).
+- **`self.user_modules: set`** added to `CppEmitter.__init__` at line 171.
+- **`visit_Import`** — accepts user modules (line 4440-4443). **Works** for
+  `import <name>` (plain import form).
+- **`visit_ImportFrom`** — accepts user modules (line 4444-4453). **Works**
+  for `from <module> import <name>`.
+- **`emitter.user_modules = _collect_user_modules(tree)`** — called at line
+  4880 of `transpile()`, before preamble emission.
+- **`cli.py`** — user-module linking block at line 184. Tries
+  `import kofty_gui as _kg` and calls `include_dirs()` / `lib_dirs()` /
+  `libs()` (which don't exist yet on the `kofty_gui` package — that's
+  part of the next step).
+
+### The bug
+
+**`#include "kofty_gui.hpp"` is not being emitted** despite everything above
+working in isolation.
+
+Diagnostic evidence:
+- `_collect_user_modules(tree)` returns `{'kofty_gui'}` ✓
+- `e.user_modules = _collect_user_modules(tree); e.user_modules` → `{'kofty_gui'}` ✓
+- Import-hoisting pass `e.visit(node)` keeps `user_modules` populated ✓
+- `emitter.user_modules = _collect_user_modules(tree)` at line 4880 runs ✓
+- Anchor E is in place at lines 5929-5931:
+
+## 70. Batch 40.3 — entry-point plugin architecture (2026-10-18)
+
+### The architectural decision
+
+Kofty language and Kofty GUI are **fully independent packages** connected
+via Python's standard entry-points mechanism — exactly like Python and
+Kivy, or Python and Pandas.
+
+**Before Batch 40.3:**
+
+`kofty/cli.py` contained:
+
+    try:
+        import kofty_gui as _kg    # ← kofty named kofty_gui
+        for _inc in _kg.include_dirs():
+            cmd.append(f"-I{_inc}")
+        ...
+
+That meant the language's source code referred to a specific downstream
+library by name. The dependency arrow pointed the wrong way.
+
+**After Batch 40.3:**
+
+`kofty/cli.py` contains:
+
+    def _discover_module_flags() -> list:
+        """Query all installed `kofty.modules` entry points for g++ flags."""
+        ...
+        eps = entry_points(group="kofty.modules")
+        ...
+
+**`kofty` source has zero references to any specific library.** It just asks
+"who wants to contribute g++ flags?" and adds whatever comes back.
+
+`kofty-gui` registers itself:
+
+    # kofty-gui/pyproject.toml
+    [project.entry-points."kofty.modules"]
+    kofty_gui = "kofty_gui:register"
+
+    # kofty-gui/kofty_gui/__init__.py
+    def register():
+        return {
+            "name": "kofty_gui",
+            "include_dirs": [str(package_dir())],
+            "lib_dirs": [],
+            "libs": [],
+        }
+
+Any future Kofty library — `kofty-plot`, `kofty-web`, `kofty-db` — plugs
+in the same way. `kofty` needs no changes when a new library is added.
+
+### The four anchors
+
+**A — `kofty/cli.py`: replace hardcoded `import kofty_gui`**
+
+Old code (lines 184-195):
+
+    # Batch 40: user module linking via `kofty_gui` (or any installed
+    # Python package that provides include_dirs / lib_dirs / libs).
+    try:
+        import kofty_gui as _kg
+        for _inc in _kg.include_dirs():
+            cmd.append(f"-I{_inc}")
+        for _libdir in _kg.lib_dirs():
+            cmd.append(f"-L{_libdir}")
+        for _lib in _kg.libs():
+            cmd.append(f"-l{_lib}")
+    except ImportError:
+        pass
+
+New code:
+
+    # Batch 40.3: query all registered `kofty.modules` entry points for
+    # extra g++ flags. Fully generic — kofty doesn't know which modules
+    # are installed; each module registers itself via pyproject.toml.
+    cmd.extend(_discover_module_flags())
+
+**B — `kofty/cli.py`: add `_discover_module_flags()` helper**
+
+Inserted above `def compile_cpp` (line 158):
+
+    def _discover_module_flags() -> list:
+        """Batch 40.3: ask every installed `kofty.modules` entry point for
+        g++ include/lib flags.
+
+        Each entry point's callable must return a dict with optional keys:
+          - include_dirs: list[str]  → -I<path>
+          - lib_dirs:     list[str]  → -L<path>
+          - libs:         list[str]  → -l<name>
+        """
+        flags = []
+        try:
+            from importlib.metadata import entry_points
+            eps = entry_points(group="kofty.modules")
+        except Exception:
+            return flags
+        for ep in eps:
+            try:
+                info = ep.load()()
+                for inc in info.get("include_dirs", []):
+                    flags.append(f"-I{inc}")
+                for libdir in info.get("lib_dirs", []):
+                    flags.append(f"-L{libdir}")
+                for lib in info.get("libs", []):
+                    flags.append(f"-l{lib}")
+            except Exception:
+                # A misbehaving module must not break compilation.
+                continue
+        return flags
+
+**C — `kofty-gui/pyproject.toml`: register the entry point**
+
+Added after `[project.urls]`:
+
+    [project.entry-points."kofty.modules"]
+    kofty_gui = "kofty_gui:register"
+
+**D — `kofty-gui/kofty_gui/__init__.py`: add `register()`**
+
+The file now includes:
+
+    def register():
+        """Batch 40.3: entry point for kofty's `kofty.modules` discovery."""
+        return {
+            "name": "kofty_gui",
+            "header": str(header_path()),
+            "include_dirs": include_dirs(),
+            "lib_dirs": lib_dirs(),
+            "libs": libs(),
+        }
+
+### Verification
+
+- `check.py` → 91 files clean
+- Transpile suite → **709 passing**
+- `Select-String -Path kofty\*.py -Pattern 'kofty_gui'` → **only one hit**,
+  a comment at `transpiler.py:2544` saying `(from kofty_gui, etc.)`. Not
+  code. Cosmetic.
+- Entry point registered and returns correct dict:
+      EP: kofty_gui -> kofty_gui:register
+      info: {'name': 'kofty_gui', 'header': 'C:\\kofty-gui\\kofty_gui\\kofty_gui.hpp',
+             'include_dirs': ['C:\\kofty-gui\\kofty_gui'], 'lib_dirs': [], 'libs': []}
+- `kofty examples\hello_stub.kfy` → `[kofty_gui] hello` ✓
+- **After `pip uninstall kofty-gui`:**
+  `kofty no_gui_test.kfy` still compiles and runs
+  → `hello from kofty without GUI` ✓
+- **After `pip install -e .`** in kofty-gui → works again ✓
+- Release: https://github.com/sharit25/kofty/releases/tag/v0.5.2
+
+### The user experience now
+
+| User | Command | Result |
+|------|---------|--------|
+| Console-only | `pip install kofty` | `kofty hello.kfy` compiles console programs. No GUI package. |
+| GUI programmer | `pip install kofty-gui` | Pulls in kofty + GUI toolkit. `kofty mygui.kfy` compiles GUI programs. |
+| Third-party library | `pip install kofty-plot` | `kofty plot.kfy` works automatically. Zero changes to kofty source. |
+
+**This is the Kivy / Python / Pandas plugin pattern.**
+
+### The stub test — proves the whole pipeline
+
+`kofty-gui/examples/hello_stub.kfy`:
+
+    from kofty_gui import gui_hello
+    gui_hello()
+
+`kofty-gui/kofty_gui/kofty_gui.hpp` (current stub):
+
+    #pragma once
+    #include <string>
+    #include <iostream>
+
+    inline void gui_hello() {
+        std::cout << "[kofty_gui] hello" << std::endl;
+    }
+
+    inline void gui_echo(const std::string& s) {
+        std::cout << "[kofty_gui] " << s << std::endl;
+    }
+
+Running `kofty examples\hello_stub.kfy` proves **six layers**:
+
+1. Kofty parses `from kofty_gui import gui_hello` ✓
+2. Transpiler emits `#include "kofty_gui.hpp"` at file scope ✓
+3. Transpiler emits `gui_hello()` as C++ call ✓
+4. g++ finds header via `-I` flag from entry-point discovery ✓
+5. g++ links stub (no external libs) ✓
+6. Binary runs, prints `[kofty_gui] hello` ✓
+
+**All six layers work end-to-end.**
+
+### Commits this session
+
+Language repo (`kofty`):
+
+    ec2987a  Batch 40: user-module imports
+    5f43def  Batch 40.2: fix include emission at file scope
+    7675b6e  Batch 40.3: entry-point plugin discovery
+    5662b12  Bump version to 0.5.2
+
+GUI repo (`kofty-gui`):
+
+    ec5ed89  Initial kofty-gui scaffold
+    80c8d5a  Add README, LICENSE, gitignore, calculator example
+    cb91944  Move kofty_gui.hpp into package; add __init__.py
+    c42660c  Relax kofty dependency for editable install
+    0b1d14d  Stub libs — empty list for no-TGUI stub test
+    e80bc57  Register kofty.modules entry point; add register()
+
+### Open items for next session
+
+**Path B — actually build the GUI** (highest priority):
+
+1. **Verify TGUI + raylib build on the machine.** TGUI clone:
+   https://github.com/texus/TGUI
