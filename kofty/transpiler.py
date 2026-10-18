@@ -2541,7 +2541,7 @@ class CppEmitter(ast.NodeVisitor):
         if name in self.user_funcs or name in self.lambda_vars:
             return f"{name}({', '.join(args)})"
 
-        # Batch 40.1: imported external functions (from kofty_gui, etc.)
+        # Batch 40.1: imported external functions (e.g. from a user module)
         # emit as bare C++ calls; g++ resolves the symbol from the header.
         if name in self.external_funcs:
             return f"{name}({', '.join(args)})"
@@ -5944,7 +5944,7 @@ def transpile(source: str) -> str:
         '',
         'int main() {',
     ]
-    
+
     parts.extend("    " * 1 + l for l in main_lines)
     if emitter.needs_raylib:
         parts.append('    if (IsWindowReady()) CloseWindow();')
