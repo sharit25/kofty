@@ -217,6 +217,24 @@ def compile_cpp(cpp_file: Path, exe_file: Path, icon=None) -> bool:
     mode = "raylib" if uses_raylib else "console"
     print(f"[Kofty] ({mode}) {' '.join(cmd)}")
 
+    import shutil
+    # Copy runtime DLLs next to the exe for GUI modules
+    try:
+        import kofty_gui as _kg
+        for _libdir in _kg.lib_dirs():
+            for _lib in _kg.libs():
+                dll_path = Path(_libdir) / f"{_lib}.dll"
+                if dll_path.exists():
+                    shutil.copy(dll_path, exe_file.parent / dll_path.name)
+        # Also copy libraylib and glfw3 from MSYS2
+        msys_lib = Path(r"C:\msys64\ucrt64\bin")
+        for dll_name in ["libraylib.dll", "glfw3.dll"]:
+            dll_src = msys_lib / dll_name
+            if dll_src.exists():
+                shutil.copy(dll_src, exe_file.parent / dll_name)
+    except Exception as e:
+        print(f"[Kofty] Warning: could not copy DLLs: {e}")
+
     result = subprocess.run(cmd)
     return result.returncode == 0
 
