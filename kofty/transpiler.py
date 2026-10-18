@@ -172,6 +172,9 @@ class CppEmitter(ast.NodeVisitor):
         # Batch 25: every name bound anywhere in the source (assign targets,
         # for-loop targets, function params, import aliases, def/class names).
         # Populated by _collect_bound_names() in transpile().
+        # Batch 40.1: symbols imported via `from <mod> import <sym>`.
+        # Treated as external C++ functions — calls pass through as-is.
+        self.external_funcs: set = set()
         self.all_bound_names: set = set()
         # Batch 11c.1: name -> element C++ type (was a set before).
         # e.g. 'int', 'std::string', 'std::pair<int, int>'. The
@@ -2538,6 +2541,11 @@ class CppEmitter(ast.NodeVisitor):
         if name in self.user_funcs or name in self.lambda_vars:
             return f"{name}({', '.join(args)})"
 
+        # Batch 40.1: imported external functions (from kofty_gui, etc.)
+        # emit as bare C++ calls; g++ resolves the symbol from the header.
+        if name in self.external_funcs:
+            return f"{name}({', '.join(args)})"
+
         raise TranspileError(f"Unknown function: {name}()")
 
     # ---- statements ------------------------------------------------------
@@ -4451,7 +4459,16 @@ class CppEmitter(ast.NodeVisitor):
             # Builtin modules — no-op; regular import handles them
             return
         self.user_modules.add(node.module)
-
+        # Batch 40.1: also register each imported symbol as an external
+        # function so `_call_expr` emits the call as-is instead of
+        # raising "Unknown function".
+        for alias in node.names:
+            if alias.name == "*":
+                raise TranspileError(
+                    "`from <module> import *` is not supported. "
+                    "Import names explicitly."
+                )
+            self.external_funcs.add(alias.asname or alias.name)
     def visit_Return(self, node: ast.Return):
         # If we're inside an optional-returning function and the value
         # is None, emit std::nullopt; instead of nullptr.
@@ -5927,9 +5944,7 @@ def transpile(source: str) -> str:
         '',
         'int main() {',
     ]
-    # Batch 40: user module headers
-    for _m in sorted(emitter.user_modules):
-        parts.append(f'#include "{_m}.hpp"')
+    
     parts.extend("    " * 1 + l for l in main_lines)
     if emitter.needs_raylib:
         parts.append('    if (IsWindowReady()) CloseWindow();')
