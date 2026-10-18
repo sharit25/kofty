@@ -167,6 +167,8 @@ class CppEmitter(ast.NodeVisitor):
         self.declared: set = set()  # variable names already declared in current scope
         self.classes: List[str] = []  # class definitions emitted separately
         self.user_classes: set = set()
+        # Batch 40: names of user modules imported (non-builtin).
+        self.user_modules: set = set()
         # Batch 25: every name bound anywhere in the source (assign targets,
         # for-loop targets, function params, import aliases, def/class names).
         # Populated by _collect_bound_names() in transpile().
@@ -4434,16 +4436,21 @@ class CppEmitter(ast.NodeVisitor):
                 # Batch 7c: time uses helpers from the preamble.
                 self.imported_modules.add("time")
                 return
-        names = ", ".join(a.name for a in node.names)
-        raise TranspileError(
-            f"Only 'import raylib' is supported. Got: import {names}"
-        )
+        # Batch 40: user modules — track them so the compiler can
+        # include and link them.
+        for alias in node.names:
+            self.user_modules.add(alias.name)
 
     def visit_ImportFrom(self, node: ast.ImportFrom):
-        raise TranspileError(
-            f"'from ... import ...' is not supported yet. Got: "
-            f"from {node.module} import ..."
-        )
+        # Batch 40: user module imports — record for include/link.
+        if node.module is None:
+            raise TranspileError(
+                "Relative imports (from . import x) are not supported."
+            )
+        if node.module in ("math", "random", "time", "raylib"):
+            # Builtin modules — no-op; regular import handles them
+            return
+        self.user_modules.add(node.module)
 
     def visit_Return(self, node: ast.Return):
         # If we're inside an optional-returning function and the value
@@ -4695,6 +4702,20 @@ def _infer_empty_list_elem_type(body, target_name):
     result = _walk(body, loop_var_types)
     return result if result is not None else "int"
 
+def _collect_user_modules(tree) -> set:
+    """Batch 40: return the set of non-builtin module names imported."""
+    builtin = {"math", "random", "time", "raylib"}
+    mods = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name not in builtin:
+                    mods.add(alias.name)
+        elif isinstance(node, ast.ImportFrom):
+            if node.module and node.module not in builtin:
+                mods.add(node.module)
+    return mods
+
 def _literal_cpp_type(node):
     """Batch 13h: return the C++ type of a literal-shaped AST node,
     or None if the node isn't a compile-time-known scalar literal."""
@@ -4856,6 +4877,7 @@ def transpile(source: str) -> str:
     # Batch 33: infer element types for empty list literals.
     # For each function body (and module scope), find `xs = []` assignments
     # and infer xs's element type from the first `xs.append(<expr>)` call.
+    emitter.user_modules = _collect_user_modules(tree)
     emitter.empty_list_types = {}
     for _scope_node in [tree] + [
         n for n in tree.body if isinstance(n, ast.FunctionDef)
@@ -5351,6 +5373,7 @@ def transpile(source: str) -> str:
         '#include <thread>',
         '#include <set>',
         '#include <set>',
+        *[f'#include "{_m}.hpp"' for _m in sorted(emitter.user_modules)],
         '',
         "// Helper: format a double cleanly — no trailing zeros, no trailing dot.",
         "// Used by InterScript `str()` for numeric values.",
@@ -5904,6 +5927,9 @@ def transpile(source: str) -> str:
         '',
         'int main() {',
     ]
+    # Batch 40: user module headers
+    for _m in sorted(emitter.user_modules):
+        parts.append(f'#include "{_m}.hpp"')
     parts.extend("    " * 1 + l for l in main_lines)
     if emitter.needs_raylib:
         parts.append('    if (IsWindowReady()) CloseWindow();')
