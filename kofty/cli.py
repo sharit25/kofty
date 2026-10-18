@@ -154,6 +154,34 @@ def build_icon_object(icon: Path, build_dir: Path, stem: str):
         return None
     return obj_file
 
+def _discover_module_flags() -> list:
+    """Batch 40.3: ask every installed `kofty.modules` entry point for
+    g++ include/lib flags.
+
+    Each entry point's callable must return a dict with optional keys:
+      - include_dirs: list[str]  → -I<path>
+      - lib_dirs:     list[str]  → -L<path>
+      - libs:         list[str]  → -l<name>
+    """
+    flags = []
+    try:
+        from importlib.metadata import entry_points
+        eps = entry_points(group="kofty.modules")
+    except Exception:
+        return flags
+    for ep in eps:
+        try:
+            info = ep.load()()
+            for inc in info.get("include_dirs", []):
+                flags.append(f"-I{inc}")
+            for libdir in info.get("lib_dirs", []):
+                flags.append(f"-L{libdir}")
+            for lib in info.get("libs", []):
+                flags.append(f"-l{lib}")
+        except Exception:
+            # A misbehaving module must not break compilation.
+            continue
+    return flags
 
 def compile_cpp(cpp_file: Path, exe_file: Path, icon=None) -> bool:
     """Invoke g++ to produce an executable.
@@ -180,6 +208,11 @@ def compile_cpp(cpp_file: Path, exe_file: Path, icon=None) -> bool:
             f"-L{RAYLIB_LIB}",
             *LINK_FLAGS.split(),
         ]
+
+    # Batch 40.3: query all registered `kofty.modules` entry points for
+    # extra g++ flags. Fully generic — kofty doesn't know which modules
+    # are installed; each module registers itself via pyproject.toml.
+    cmd.extend(_discover_module_flags())
 
     mode = "raylib" if uses_raylib else "console"
     print(f"[Kofty] ({mode}) {' '.join(cmd)}")
