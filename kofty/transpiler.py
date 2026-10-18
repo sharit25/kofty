@@ -978,10 +978,10 @@ class CppEmitter(ast.NodeVisitor):
 
         if isinstance(node, ast.Dict):
             if len(node.keys) == 0:
-                raise TranspileError(
-                    "empty dict literals are not supported (no value "
-                    "type to infer). Add at least one entry."
-                )
+                # Batch 34: emit provisional std::map<std::string, int>{}.
+                # The assignment site overrides the value type via
+                # empty_dict_types inference.
+                return "std::map<std::string, int>{}"
             # Validate: all keys must be string literals
             for k in node.keys:
                 if not (isinstance(k, ast.Constant)
@@ -2472,7 +2472,13 @@ class CppEmitter(ast.NodeVisitor):
                 )
             # Assume the argument is a list/vector variable
             return f"{args[0]}.size()"
-
+        # Batch 35: sorted(xs) → sorted copy.
+        if name == "sorted":
+            if len(args) != 1:
+                raise TranspileError(
+                    f"sorted() takes exactly 1 argument, got {len(args)}"
+                )
+            return f"sorted_helper({args[0]})"
         # Special case: vec2(x, y) → std::pair<double, double>
         # Values are always cast to double so vec2 arithmetic stays
         # in floating-point, matching the intent of positions/velocities.
@@ -2757,9 +2763,16 @@ class CppEmitter(ast.NodeVisitor):
             # Record the value type so subscript dispatch works later.
             if isinstance(node.value, ast.Dict):
                 if len(node.value.values) == 0:
-                    raise TranspileError(
-                        "empty dict literals are not supported."
-                    )
+                    # Batch 34: use inferred value type from pre-pass.
+                    _vt = self.empty_dict_types.get(name, "int")
+                    # The `value` string was already emitted by expr();
+                    # we need to emit our own override.
+                    # (self.emit above already fired — undo by not calling
+                    # the outer emit in this case. See below.)
+                    self.emit(f"auto {name} = std::map<std::string, {_vt}>{{}};")
+                    self.declared.add(name)
+                    self.dict_vars[name] = _vt
+                    return
 
                 def _infer_dict_value_type(val_node):
                     if isinstance(val_node, ast.Constant):
@@ -2878,6 +2891,14 @@ class CppEmitter(ast.NodeVisitor):
                     self.emit(f"auto {name} = std::vector<{_et}>{{}};")
                     self.declared.add(name)
                     self.list_vars[name] = _et
+                    return
+                 # Batch 34: `d = {}` — use inferred value type.
+                if (isinstance(node.value, ast.Dict)
+                        and len(node.value.keys) == 0):
+                    _vt = self.empty_dict_types.get(name, "int")
+                    self.emit(f"auto {name} = std::map<std::string, {_vt}>{{}};")
+                    self.declared.add(name)
+                    self.dict_vars[name] = _vt
                     return
                 self.emit(f"auto {name} = {value};")
                 self.declared.add(name)
@@ -4523,6 +4544,98 @@ def _collect_bound_names(tree) -> set:
                 names.add(a.kwarg.arg)
     return names
 
+def _infer_empty_dict_value_type(body, target_name):
+    """Batch 34: infer value type of `target = {}` by scanning `body`
+    for `target[key] = <expr>` assignments.
+
+    Handles:
+      - <expr> is a literal                  → its C++ type
+      - <expr> is a name from loop-var types → that var's type
+      - <expr> is a BinOp mixing known types → the wider type
+      - otherwise                             → "int" fallback
+    """
+    loop_var_types = {}
+
+    def _walk(stmts, lv):
+        for stmt in stmts:
+            if isinstance(stmt, ast.For) and isinstance(stmt.target, ast.Name):
+                new_lv = dict(lv)
+                if isinstance(stmt.iter, ast.Name):
+                    if stmt.iter.id in lv:
+                        new_lv[stmt.target.id] = lv[stmt.iter.id]
+                elif (isinstance(stmt.iter, ast.Call)
+                        and isinstance(stmt.iter.func, ast.Attribute)
+                        and stmt.iter.func.attr == "split"):
+                    new_lv[stmt.target.id] = "std::string"
+                r = _walk(stmt.body, new_lv)
+                if r is not None:
+                    return r
+                r = _walk(stmt.orelse, new_lv)
+                if r is not None:
+                    return r
+                continue
+
+            # <target>[key] = <expr>
+            if (isinstance(stmt, ast.Assign)
+                    and len(stmt.targets) == 1
+                    and isinstance(stmt.targets[0], ast.Subscript)
+                    and isinstance(stmt.targets[0].value, ast.Name)
+                    and stmt.targets[0].value.id == target_name):
+                val = stmt.value
+                if isinstance(val, ast.Constant):
+                    v = val.value
+                    if isinstance(v, bool):
+                        return "bool"
+                    if isinstance(v, int):
+                        return "int"
+                    if isinstance(v, float):
+                        return "double"
+                    if isinstance(v, str):
+                        return "std::string"
+                if isinstance(val, ast.Name) and val.id in lv:
+                    return lv[val.id]
+                if (isinstance(val, ast.BinOp)
+                        and isinstance(val.op, ast.Add)):
+                    lt = _infer_empty_dict_value_type([ast.Pass()], target_name)
+                    # inline: check operand types
+                    lv_type = None
+                    rv_type = None
+                    if isinstance(val.left, ast.Constant):
+                        v = val.left.value
+                        if isinstance(v, bool): lv_type = "bool"
+                        elif isinstance(v, int): lv_type = "int"
+                        elif isinstance(v, float): lv_type = "double"
+                        elif isinstance(v, str): lv_type = "std::string"
+                    if isinstance(val.left, ast.Name) and val.left.id in lv:
+                        lv_type = lv[val.left.id]
+                    if isinstance(val.right, ast.Constant):
+                        v = val.right.value
+                        if isinstance(v, bool): rv_type = "bool"
+                        elif isinstance(v, int): rv_type = "int"
+                        elif isinstance(v, float): rv_type = "double"
+                        elif isinstance(v, str): rv_type = "std::string"
+                    if isinstance(val.right, ast.Name) and val.right.id in lv:
+                        rv_type = lv[val.right.id]
+                    if lv_type == "std::string" or rv_type == "std::string":
+                        return "std::string"
+                    if lv_type == "double" or rv_type == "double":
+                        return "double"
+                    if lv_type == "int" and rv_type == "int":
+                        return "int"
+                return "int"
+
+            for field in ("body", "orelse", "handlers", "finalbody"):
+                sub = getattr(stmt, field, None)
+                if isinstance(sub, list):
+                    r = _walk(sub, lv)
+                    if r is not None:
+                        return r
+
+        return None
+
+    result = _walk(body, loop_var_types)
+    return result if result is not None else "int"
+
 def _infer_empty_list_elem_type(body, target_name):
     """Batch 33: infer element type of `target = []` by scanning `body`
     for `target.append(<expr>)` calls.
@@ -4757,6 +4870,22 @@ def transpile(source: str) -> str:
                 _lname = _stmt.targets[0].id
                 emitter.empty_list_types[_lname] = _infer_empty_list_elem_type(
                     _body, _lname
+                )
+    # Batch 34: infer value types for empty dict literals.
+    emitter.empty_dict_types = {}
+    for _scope_node in [tree] + [
+        n for n in tree.body if isinstance(n, ast.FunctionDef)
+    ]:
+        _body = _scope_node.body if isinstance(_scope_node, ast.FunctionDef) else tree.body
+        for _stmt in _body:
+            if (isinstance(_stmt, ast.Assign)
+                    and len(_stmt.targets) == 1
+                    and isinstance(_stmt.targets[0], ast.Name)
+                    and isinstance(_stmt.value, ast.Dict)
+                    and len(_stmt.value.keys) == 0):
+                _dname = _stmt.targets[0].id
+                emitter.empty_dict_types[_dname] = _infer_empty_dict_value_type(
+                    _body, _dname
                 )
     # Pass 1.5: register all top-level imports BEFORE emitting any
     # class or function bodies. visit_Import only sets
@@ -5400,6 +5529,14 @@ def transpile(source: str) -> str:
         "    std::string out;",
         "    out.reserve(s.size() * (size_t)n);",
         "    for (int i = 0; i < n; ++i) out += s;",
+        "    return out;",
+        "}",
+        "",
+        "// Batch 35: sorted(xs) — returns a sorted copy.",
+        "template <typename T>",
+        "std::vector<T> sorted_helper(const std::vector<T>& xs) {",
+        "    std::vector<T> out = xs;",
+        "    std::sort(out.begin(), out.end());",
         "    return out;",
         "}",
         "",

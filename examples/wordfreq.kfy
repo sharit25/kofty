@@ -1,0 +1,18 @@
+f = open("examples/input.txt", "r")
+content = f.read()
+f.close()
+
+words = content.lower().split(" ")
+
+counts = {}
+for w in words:
+    w = w.strip()
+    if w == "":
+        continue
+    if w in counts:
+        counts[w] = counts[w] + 1
+    else:
+        counts[w] = 1
+
+for w in counts:
+    print(w + ": " + str(counts[w]))

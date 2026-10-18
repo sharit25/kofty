@@ -3487,3 +3487,26 @@ Since this session added Batches 32, 33 as one logical feature area, consider:
 
 Nothing else is pressing. The `File` API covers `open`/`read`/`write`/`close`
 which is 90% of file I/O in real programs.
+
+### Batch 33 amendments (post-commit)
+
+- **Menu input** — `run()` accepts `1`/`list`, `2`/`add`, `3`/`remove`,
+  `4`/`quit`/`q`, case-insensitive via `.lower()`. Both numbers and words
+  work.
+- **Function-mutation bug** — if Add doesn't appear in a same-session
+  List, that's the list-params-by-value gap. Batch 34 candidate.
+  Workaround: `items = add_todo(items)` / `items = remove_todo(items)`.
+
+### Confirmed bug: list params by value
+
+`add_todo(items)` and `remove_todo(items)` mutate the *local copy* in C++.
+In-session changes to `items` don't persist. `save_todos` writes to disk,
+so the item is saved, but the menu's `items` still shows the old value.
+
+**Fix (Batch 34)**: make `add_todo` return the mutated list, and reassign
+at call site:
+    items = add_todo(items)
+    items = remove_todo(items)
+
+Or (transpiler fix): pass list params by reference
+(`std::vector<T>& items` instead of `std::vector<T> items`).

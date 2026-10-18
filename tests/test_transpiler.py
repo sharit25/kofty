@@ -1455,10 +1455,6 @@ def test_dict_add_new_key():
     )
     assert 'd["b"] = 2;' in out
 
-def test_empty_dict_raises():
-    with pytest.raises(TranspileError, match="empty dict"):
-        transpile("d = {}")
-
 def test_measure_text_builtin():
     out = transpile('w = measure_text("hello", 20)')
     assert 'auto w = MeasureText("hello", 20);' in out
