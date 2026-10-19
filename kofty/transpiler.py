@@ -4883,9 +4883,48 @@ def _scan_ctor_arg_types(tree, user_classes):
     return result
 
 
-def transpile(source: str) -> str:
+def transpile(source: str, source_path=None) -> str:
     """Convert InterScript source to a complete C++ translation unit."""
     tree = ast.parse(source)
+    # Multi-file Kofty imports: resolve `from <module> import <name>`
+    # by looking for `<module>.kfy` next to the source file.
+    if source_path is not None:
+        import pathlib
+        _imported_source_functions = {}
+        _remaining_body = []
+        for _node in tree.body:
+            if isinstance(_node, ast.ImportFrom) and _node.module:
+                if _node.module in ("math", "random", "time", "raylib"):
+                    _remaining_body.append(_node)
+                    continue
+                _module_file = pathlib.Path(source_path).parent / f"{_node.module}.kfy"
+                if not _module_file.exists():
+                    _remaining_body.append(_node)
+                    continue
+                _module_source = _module_file.read_text(encoding="utf-8-sig")
+                _module_tree = ast.parse(_module_source)
+                _module_funcs = {}
+                for _item in _module_tree.body:
+                    if isinstance(_item, ast.FunctionDef):
+                        _module_funcs[_item.name] = _item
+                for _alias in _node.names:
+                    if _alias.name == "*":
+                        raise TranspileError(
+                            f"`from {_node.module} import *` is not supported."
+                        )
+                    if _alias.name not in _module_funcs:
+                        raise TranspileError(
+                            f"'{_alias.name}' is not defined in "
+                            f"{_module_file.name}."
+                        )
+                    _imported_source_functions[_alias.name] = \
+                        _module_funcs[_alias.name]
+                for _mnode in _module_tree.body:
+                    if isinstance(_mnode, (ast.Import, ast.ImportFrom)):
+                        _remaining_body.append(_mnode)
+                continue
+            _remaining_body.append(_node)
+        tree.body = list(_imported_source_functions.values()) + _remaining_body
 
     # Pass 1: register user function names and class names so calls resolve.
     # Pass 1: register user function names and class names so calls resolve.

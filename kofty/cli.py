@@ -85,20 +85,14 @@ RAYLIB_LIB     = os.environ.get("RAYLIB_LIB",     "C:/raylib/lib")
 LINK_FLAGS = "-lraylib -lopengl32 -lgdi32 -lwinmm"
 
 
-def build_cpp(source: str, out_cpp: Path) -> bool:
-    """Transpile and write the C++ file. Returns True on success."""
+def build_cpp(source: str, cpp_file: Path, source_path=None) -> bool:
     try:
-        cpp = transpile(source)
+        cpp = transpile(source, source_path=source_path)
+        cpp_file.write_text(cpp, encoding="utf-8")
+        return True
     except TranspileError as e:
-        print(f"[Kofty] Transpile error: {e}", file=sys.stderr)
+        print(f"[Kofty] Transpile error: {e}")
         return False
-    except SyntaxError as e:
-        print(f"[Kofty] Python syntax error: {e}", file=sys.stderr)
-        return False
-
-    out_cpp.parent.mkdir(parents=True, exist_ok=True)
-    out_cpp.write_text(cpp, encoding="utf-8")
-    return True
 
 
 def resolve_icon(icon_arg, source_file: Path):
@@ -389,7 +383,7 @@ def main(argv=None) -> int:
     # PowerShell's Set-Content, Notepad, or Visual Studio (all of
     # which write BOM-prefixed UTF-8 by default on Windows) parse
     # correctly.
-    if not build_cpp(src_path.read_text(encoding="utf-8-sig"), cpp_file):
+    if not build_cpp(src_path.read_text(encoding="utf-8-sig"), cpp_file, source_path=src_path):
         return 1
 
     print(f"[Kofty] Wrote {cpp_file}")
