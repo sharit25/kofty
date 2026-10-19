@@ -3895,3 +3895,21 @@ GUI repo (`kofty-gui`):
 
 1. **Verify TGUI + raylib build on the machine.** TGUI clone:
    https://github.com/texus/TGUI
+
+## §74: Root cause of blank TGUI windows (v0.8.1)
+
+**The bug:** `reinterpret_cast<tgui::Container*>(g_gui)` produces a corrupted pointer because `tgui::Gui` inherits from `tgui::Container` with a virtual base offset. `reinterpret_cast` does not adjust the pointer for that offset, so `->add(widget)` writes into garbage memory. The widgets are stored in the `g_buttons`/`g_labels` vectors (so `g_buttons.size()` was correct), but TGUI never receives them because the container pointer is wrong.
+
+**The fix:** Never cast `tgui::Gui*` to `tgui::Container*` with `reinterpret_cast`. Instead, call `g_gui->add(widget)` directly. The compiler does the correct upcast automatically.
+
+**Symptoms that were downstream of this bug (not real problems):**
+- Blank window with no errors
+- `gui_update: frame N` printing (loop was running)
+- `IsWindowReady=1` (window was created)
+- `nm -C libtgui.a` showed backend symbols (backend was linked)
+- `setAbsoluteViewport` had no effect (viewport was never wrong)
+- Minimal test at `/c/tgui_test/main.cpp` worked (it added widgets directly to `Gui`)
+
+**Testing lessons:**
+- When a wrapped library renders nothing but a raw test of the same library works, suspect the wrapper's pointer handling.
+- `reinterpret_cast` on a pointer to a class with virtual inheritance is almost always wrong. Use `static_cast` if the relation is known, or just don't cast.
