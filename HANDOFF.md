@@ -4034,3 +4034,73 @@ Try in order:
 ### Next step
 
 **Do not add more widgets or layouts until both bugs above are fixed.** The foundation is correct — the window, layouts, colors, sizes, and resizing all work. The remaining issues are two small, well-scoped C++ issues. Once fixed, we can safely add: AnchorLayout, StackLayout, ScrollView, RelativeLayout, Image, Slider, ToggleButton, TextInput, Canvas drawing, and animation.
+
+## §78: Kofty GUI — clicks and close fixed (2026-10-20)
+
+**Status:** Both bugs from §77 are fixed. Window opens, renders
+label + 3 colored buttons in a vertical BoxLayout, resizes,
+clicks work (button text updates to "Clicked Nx"), and close is
+instant.
+
+### Root cause — Bug 1 (clicks never fired)
+
+`gui_window()` and `gui_running()` both called `PollInputEvents()`
+from raylib every frame. TGUI's raylib backend also pumps the same
+GLFW event queue from inside `gui->handleEvents()`. Whichever pump
+ran first drained the queue, so the other got nothing. In this
+case raylib's manual `PollInputEvents()` always won, so TGUI's
+`onPress` callbacks never fired.
+
+**Fix:** delete `PollInputEvents()` from `gui_window()` and
+`gui_running()`. TGUI's raylib backend is the sole intended
+consumer of raylib's input queue.
+
+### Root cause — Bug 2 (close hangs)
+
+`gui_close()` was never called. The `.kfy` loop was:
+
+    while gui_running():
+        ...
+        gui_update()
+    # ← nothing here
+
+`WindowShouldClose()` would flip true, the loop would exit, and
+raylib's window would be left alive in memory. Process exit then
+went through raylib's global teardown path, which is much slower
+than `CloseWindow()`. The "hang" was teardown, not a frozen loop.
+
+**Fix:** add `gui_close()` after the `while gui_running():` loop
+in the `.kfy`. Comment out `delete g_gui;` inside `gui_close()`
+— the Gui destructor during teardown has been slow/hang-prone on
+raylib 6.0 + TGUI. Leaking one Gui object at process exit costs
+nothing.
+
+### Also fixed
+
+`gui_update()` gained a `if (WindowShouldClose()) return;` guard
+so it doesn't touch a dying window on the frame that closes.
+
+### Lessons
+
+1. **Never call `PollInputEvents()` when using TGUI's raylib
+   backend.** The backend owns the input pump. Two pumps =
+   starvation.
+2. **`CloseWindow()` must be called explicitly.** raylib 6.0's
+   global teardown (via atexit handlers) is much slower than the
+   explicit `CloseWindow()` path.
+3. **Diagnostic code accumulates.** The "loop must be frozen"
+   hypothesis was wrong — an unguarded `printf` (duplicate of a
+   guarded one) made it *look* like a flood. Always clean up
+   diagnostics before drawing conclusions.
+
+### Next
+
+Foundation is done. §77's roadmap is unblocked:
+- AnchorLayout, StackLayout, ScrollView, RelativeLayout
+- Image, Slider, ToggleButton, TextInput
+- Canvas drawing
+- Animation
+
+Do NOT add `PollInputEvents()` anywhere in the event pipeline.
+Do NOT delete `g_gui` in `gui_close()` until raylib teardown is
+investigated further.
