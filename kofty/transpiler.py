@@ -26,7 +26,10 @@ NOT yet supported (will raise TranspileError):
 """
 
 import ast
+import re
+import pathlib
 from typing import List
+from kofty.kv_parser import load_ui_file
 
 
 class TranspileError(Exception):
@@ -4882,14 +4885,48 @@ def _scan_ctor_arg_types(tree, user_classes):
         result.setdefault(cls, {})
     return result
 
-
 def transpile(source: str, source_path=None) -> str:
     """Convert InterScript source to a complete C++ translation unit."""
+    # --- NEW: Parse declarative UI files (gui_load_ui) ---
+    # Find all `gui_load_ui("filename")` calls in the source
+    ui_matches = re.findall(r'gui_load_ui\(["\'](.*?)["\']\)', source)
+    for ui_file in ui_matches:
+        if source_path:
+            ui_path = pathlib.Path(source_path).parent / ui_file
+            if ui_path.exists():
+                ui_code = load_ui_file(str(ui_path))
+                # Replace the gui_load_ui call with the generated Python code
+                source = source.replace(f'gui_load_ui("{ui_file}")', ui_code)
+                source = source.replace(f"gui_load_ui('{ui_file}')", ui_code)
+            else:
+                raise TranspileError(f"UI file not found: {ui_file}")
+    # -----------------------------------------------------
+    # --- Parse declarative UI files (gui_load_ui) ---
+    # Find every gui_load_ui("filename") call in the source,
+    # transpile the referenced .kfy file, and inline its output.
+    ui_matches = re.findall(
+        r'gui_load_ui\s*\(\s*["\']([^"\']+)["\']\s*\)', source
+    )
+    for ui_file in ui_matches:
+        if source_path is None:
+            raise TranspileError(
+                f"gui_load_ui('{ui_file}') requires a source file path "
+                f"(kofty must be invoked on a real .kfy file)."
+            )
+        ui_path = pathlib.Path(source_path).parent / ui_file
+        if not ui_path.exists():
+            raise TranspileError(f"UI file not found: {ui_file}")
+        ui_code = load_ui_file(str(ui_path))
+        # Replace both quote styles
+        source = source.replace(f'gui_load_ui("{ui_file}")', ui_code)
+        source = source.replace(f"gui_load_ui('{ui_file}')", ui_code)
+    # --- End gui_load_ui ---
+
+
     tree = ast.parse(source)
     # Multi-file Kofty imports: resolve `from <module> import <name>`
     # by looking for `<module>.kfy` next to the source file.
     if source_path is not None:
-        import pathlib
         _imported_source_functions = {}
         _remaining_body = []
         for _node in tree.body:
