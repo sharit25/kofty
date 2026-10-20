@@ -3913,3 +3913,124 @@ GUI repo (`kofty-gui`):
 **Testing lessons:**
 - When a wrapped library renders nothing but a raw test of the same library works, suspect the wrapper's pointer handling.
 - `reinterpret_cast` on a pointer to a class with virtual inheritance is almost always wrong. Use `static_cast` if the relation is known, or just don't cast.
+
+## §75: Multi-file Kofty Modules (v0.5.3)
+
+**The feature:** A `.kfy` file can now import functions defined in another `.kfy` file in the same directory, using `from <module> import <name>`.
+
+**How it works:** During transpilation, the `transpile()` function scans the AST for `ImportFrom` nodes. If the module name resolves to a `.kfy` file next to the source, that file is parsed, its requested functions are inlined into the importing file's AST, and any `ImportFrom` statements from the imported file are also preserved so that inlined functions can still reference their external dependencies.
+
+**Example:**
+```python
+# hello_ui.kfy
+from kofty_gui import gui_window, gui_add_button, gui_running, gui_update, gui_close
+
+def build_ui():
+    gui_window(500, 400, "Hello from module")
+    gui_add_button("Click me!", 150, 150, 200, 60, -1)
+    while gui_running():
+        gui_update()
+    gui_close()
+
+## §76: Automatic Layout Managers (v0.9.1)
+
+**The feature:** Kofty now supports automatic UI layout managers. Instead of calculating `x` and `y` coordinates manually, you can add widgets to a `BoxLayout`, and it will position them automatically.
+
+**How it works:** `gui_add_boxlayout` wraps TGUI's native `tgui::VerticalLayout` and `tgui::HorizontalLayout`. The `orientation` parameter (0 = Vertical, 1 = Horizontal) determines which one is created.
+
+**Example:**
+```python
+# Create a vertical layout with 20px spacing
+main_box = gui_add_boxlayout(0, 20, 50, 50, 400, 400, -1)
+
+# Add widgets (x and y are ignored, layout handles it)
+gui_add_label("Choose an option:", 0, 0, main_box)
+gui_add_button("Start Game", 0, 0, 300, 50, main_box)
+gui_add_button("Settings", 0, 0, 300, 50, main_box)
+
+
+## §77: Kofty GUI Foundation — Working Window, Open Click/Close Bugs
+
+**Status:** Window opens, renders correctly, resizes correctly. Two bugs remain.
+
+### What works end-to-end
+
+- Kofty `.kfy` source transpiles to C++ via `kofty` CLI (MSYS2 UCRT64, g++ 16.2)
+- TGUI + raylib backend built and linked (`-DTGUI_BACKEND=RAYLIB -DBUILD_SHARED_LIBS=ON`)
+- `hello_main.kfy` defines `class MainApp` with `__init__`, instantiates `app = MainApp()`, calls `gui_window(...)`, loads `hello_ui.kfy`, runs a render loop
+- `hello_ui.kfy` declarative layout is parsed by `kv_parser.py` and inlined by `gui_load_ui()` in `transpiler.py`
+- Rendering: window opens with a black label "Welcome to Kivy Style" and 3 colored buttons (red, blue, green) in a vertical `BoxLayout`
+- Resizing the window resizes the layout correctly
+- Widgets: Button, Label
+- Layouts: BoxLayout (vertical/horizontal), GridLayout (rows/cols)
+- Setters: `gui_set_text`, `gui_set_size`, `gui_set_pos`, `gui_set_button_color`, `gui_set_label_color`
+- Events: `gui_check_click()` exists and is wired into the C++ `onPress` callback
+
+### Architecture (current)
+
+- `kofty_gui.hpp`: TGUI wrappers; uses `std::map<int, tgui::Widget::Ptr>` for widget tracking, `std::map<int, tgui::Container::Ptr>` for layouts, `std::map<int, tgui::Grid::Ptr>` for grids
+- `_kofty_attach_container` and `_kofty_attach_widget` are separate functions; the old shared `_kofty_attach` was the null-pointer crash that made the window open-and-close (fixed)
+- `gui_update()` **must** call `gui->setAbsoluteViewport(...)` every frame. Removing it made the UI unclickable in an earlier test.
+- `gui_close()` should stay simple (`delete g_gui; CloseWindow();`). Adding `PollInputEvents()` or `CloseAudioDevice()` around it made shutdown worse.
+
+### Bug 1: Clicks don't fire
+
+**Symptom:** Clicking any button does not change its text. No `onPress` callback fires. `gui_check_click()` returns `-1` every frame.
+
+**Current implementation:**
+- `gui_add_button` calls `btn->onPress([id]{ kofty_gui_detail::g_last_clicked_id = id; })`
+- `gui_update()` calls `gui->handleEvents()` then `gui->draw()`
+- `gui_check_click()` reads `g_last_clicked_id`, resets to `-1`, returns it
+
+**Not yet diagnosed.** The previous diagnostic `printf` block in `gui_running()` was capped at 3 prints, so we cannot tell whether the loop is iterating past 3 frames. The two hypotheses to distinguish:
+
+- **(A) Loop is frozen.** `gui_update()` blocks on some frame. If true, `handleEvents()` never runs, so no clicks and `WindowShouldClose()` never updates.
+- **(B) Loop runs but input isn't routed.** TGUI receives no mouse events, so `onPress` never fires.
+
+**Diagnostic to run first:** Replace the capped `printf` in `gui_running` with an unthrottled counter that prints every frame for the first 200 frames. If it stops early, the loop is frozen (A). If it reaches 200, the loop is alive (B).
+
+Then:
+- In (A), add a `printf` at the start of `gui_update()` and a `printf` between `handleEvents()` and `draw()` to find the exact blocked call.
+- In (B), add a `printf` inside `onPress` and inside `gui_check_click`. If `onPress` prints when clicked but `gui_check_click` returns -1, the issue is in the loop order in `hello_main.kfy`. If `onPress` never prints, the issue is in TGUI's event dispatch.
+
+### Bug 2: Window close hangs
+
+**Symptom:** Clicking the X button doesn't immediately terminate the process. Sometimes requires Task Manager to kill `hello_main.exe`.
+
+**Not yet diagnosed as teardown delay vs. true hang.**
+
+**Diagnostic:** After closing the window, immediately run `Get-Process hello_main -ErrorAction SilentlyContinue` in PowerShell. If the process is gone, the "hang" is just the terminal not returning to prompt (cosmetic). If the process still exists, something is genuinely blocked.
+
+Try in order:
+1. Simple `gui_close()`: `delete g_gui; g_gui = nullptr; CloseWindow();` — current state, hung.
+2. `CloseAudioDevice()` before `CloseWindow()` — untested with current architecture.
+3. `SetWindowState(FLAG_WINDOW_HIDDEN)` before `CloseWindow()` — untested.
+4. If still hung, the culprit is likely raylib's GLFW message pump on Windows and may require an explicit `glfwDestroyWindow` sequence or an `exit(0)` after `CloseWindow()`.
+
+### Known-good state
+
+- `gui_window()`: `SetTraceLogLevel(LOG_ERROR)`, `SetConfigFlags(FLAG_WINDOW_RESIZABLE)`, `InitWindow`, `PollInputEvents()`, `SetTargetFPS(60)`, `new tgui::Gui()`, clear all state maps, reset `g_next_id`
+- `gui_update()`: `setAbsoluteViewport` → `handleEvents` → `GetCharPressed`/`GetKeyPressed` forwarding → `BeginDrawing` → `ClearBackground` → `gui->draw()` → `EndDrawing`
+- `gui_add_boxlayout`, `gui_add_gridlayout`, `gui_add_button`, `gui_add_label` each use `_kofty_attach_container` or `_kofty_attach_widget` as appropriate
+- `gui_close()`: `delete g_gui; g_gui = nullptr; CloseWindow();`
+
+### File map (for next session)
+
+- `C:\kofty-gui\kofty_gui\kofty_gui.hpp` — C++ backend
+- `C:\kofty-gui\examples\hello_main.kfy` — main app with `class MainApp`, `__init__`, render loop
+- `C:\kofty-gui\examples\hello_ui.kfy` — declarative UI (`<MainApp>:` → `<BoxLayout>:` → Label/Buttons)
+- `C:\InterScript-Language\kofty\kv_parser.py` — parses `.kfy` declarative syntax → Kofty function calls
+- `C:\InterScript-Language\kofty\transpiler.py` — handles `gui_load_ui()` inlining; the block is in `transpile()` before `tree = ast.parse(source)`
+- `C:\InterScript-Language\kofty\cli.py` — compile pipeline (`build_cpp`, `compile_cpp`)
+
+### Environment
+
+- Windows, MSYS2 UCRT64 (g++ 16.2, raylib 6.0)
+- TGUI built with `-DTGUI_BACKEND=RAYLIB -DBUILD_SHARED_LIBS=ON`
+- TGUI headers: `C:\TGUI\include`, libs: `C:\TGUI\build\lib`
+- raylib headers: `C:\msys64\ucrt64\include`, libs: `C:\msys64\ucrt64\lib`
+- `kofty-gui` Python package installed editable; `register()` returns the header path and link flags
+
+### Next step
+
+**Do not add more widgets or layouts until both bugs above are fixed.** The foundation is correct — the window, layouts, colors, sizes, and resizing all work. The remaining issues are two small, well-scoped C++ issues. Once fixed, we can safely add: AnchorLayout, StackLayout, ScrollView, RelativeLayout, Image, Slider, ToggleButton, TextInput, Canvas drawing, and animation.
