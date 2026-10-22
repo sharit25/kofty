@@ -3868,6 +3868,10 @@ class CppEmitter(ast.NodeVisitor):
           - Method override (parent methods emitted `virtual`, child `override`)
           - Field type inference from annotations and literals
         """
+
+        # Skip C++ classes that come from external headers
+        if node.name in ("Label", "TextInput", "Button", "Widget"):
+            return
         class_name = node.name
         self._check_name(class_name, "Class name")
 
@@ -4453,18 +4457,15 @@ class CppEmitter(ast.NodeVisitor):
             self.user_modules.add(alias.name)
 
     def visit_ImportFrom(self, node: ast.ImportFrom):
-        # Batch 40: user module imports — record for include/link.
         if node.module is None:
             raise TranspileError(
                 "Relative imports (from . import x) are not supported."
             )
         if node.module in ("math", "random", "time", "raylib"):
-            # Builtin modules — no-op; regular import handles them
             return
+
         self.user_modules.add(node.module)
-        # Batch 40.1: also register each imported symbol as an external
-        # function so `_call_expr` emits the call as-is instead of
-        # raising "Unknown function".
+
         for alias in node.names:
             if alias.name == "*":
                 raise TranspileError(
@@ -4922,6 +4923,107 @@ def transpile(source: str, source_path=None) -> str:
         source = source.replace(f"gui_load_ui('{ui_file}')", ui_code)
     # --- End gui_load_ui ---
 
+    # --- RAW FILE MERGE FOR KIVY CLASSES ---
+    if source_path is not None:
+        import sys
+        _lines = source.split("\n")
+        _new_lines = []
+
+        # We will collect all C++ imports here to put at the VERY top
+        _hoisted_cpp_imports = []
+
+        _project_root = pathlib.Path(source_path).resolve().parent.parent
+
+        for _line in _lines:
+            _m = re.match(r'^from\s+([\w\.]+)\s+import\s+(.*)$', _line)
+            if _m:
+                _mod = _m.group(1)
+                if _mod in ("kofty_gui", "raylib", "math", "time", "random"):
+                    _new_lines.append(_line)
+                    _hoisted_cpp_imports.append(_line)
+                    continue
+
+                _found = False
+                _search_paths = [
+                    pathlib.Path(source_path).parent,
+                    _project_root,
+                ]
+                for _p in _project_root.glob("*/"):
+                    if _p.is_dir():
+                        _search_paths.append(_p)
+
+                for _base in _search_paths:
+                    for _ext in [".kfy", ".py"]:
+                        _local = _base / f"{_mod.replace('.', '/')}{_ext}"
+                        if _local.exists():
+                            _file_content = _local.read_text(encoding="utf-8-sig")
+                            _safe_lines = []
+                            for _fl in _file_content.split("\n"):
+                                if _fl.startswith("from kofty_gui import"):
+                                    _hoisted_cpp_imports.append(_fl)
+                                else:
+                                    _safe_lines.append(_fl)
+
+                            _new_lines.append(f"# INLINED FROM {_mod}")
+                            _new_lines.extend(_safe_lines)
+                            _new_lines.append("# END INLINED")
+                            _found = True
+                            break
+                    if _found:
+                        break
+
+                if not _found:
+                    raise TranspileError(f"Could not find module '{_mod}'")
+                continue
+
+            _new_lines.append(_line)
+
+        # Prepend all hoisted C++ imports to the source!
+        source = "\n".join(_hoisted_cpp_imports) + "\n" + "\n".join(_new_lines)
+
+    # --- GUI INTERCEPTOR ---
+    # If the source imports kofty_gui, use the GUI transpiler to flatten classes.
+    # --- PLUGIN TRANSPILER INTERCEPTOR ---
+    if source_path is not None:
+        try:
+            from importlib.metadata import entry_points
+            eps = entry_points(group="kofty.transpilers")
+            for ep in eps:
+                # If a transpiler is registered, call it!
+                # (We only have one right now, kofty_gui)
+                if "kofty_gui" in source:
+                    parser_func = ep.load()
+                    source = parser_func(source, pathlib.Path(source_path))
+                    break
+        except Exception:
+            pass # No custom transpilers installed
+    # -------------------------------------
+
+    # --- INLINE EXTERNAL CLASSES FOR C++ TYPE REGISTRATION ---
+    if source_path is not None:
+        #import pathlib
+        _src_dir = pathlib.Path(source_path).resolve().parent
+        _tree = ast.parse(source)
+        _new_body = []
+        _imports_to_prepend = []
+
+        for _node in _tree.body:
+            if isinstance(_node, ast.ImportFrom) and _node.module == "widgets":
+                _w_path = _src_dir / "widgets.py"
+                if _w_path.exists():
+                    _w_source = _w_path.read_text(encoding="utf-8-sig")
+                    _w_tree = ast.parse(_w_source)
+                    for _w_node in _w_tree.body:
+                        if isinstance(_w_node, (ast.ClassDef, ast.FunctionDef)):
+                            _new_body.append(_w_node)
+                        elif isinstance(_w_node, (ast.Import, ast.ImportFrom)):
+                            _imports_to_prepend.append(_w_node)
+                    continue # skip the original import
+            _new_body.append(_node)
+
+        _tree.body = _imports_to_prepend + _new_body
+        source = ast.unparse(_tree)
+    # ---------------------------------------------------------
 
     tree = ast.parse(source)
     # Multi-file Kofty imports: resolve `from <module> import <name>`
@@ -4934,31 +5036,50 @@ def transpile(source: str, source_path=None) -> str:
                 if _node.module in ("math", "random", "time", "raylib"):
                     _remaining_body.append(_node)
                     continue
-                _module_file = pathlib.Path(source_path).parent / f"{_node.module}.kfy"
-                if not _module_file.exists():
+                # Look for the module in the local folder, the parent folder,
+                # or the kofty_ui library folder.
+                _mod_path = _node.module.replace('.', '/')
+                _possible_paths = [
+                    pathlib.Path(source_path).parent / f"{_node.module}.kfy",
+                    pathlib.Path(source_path).parent / f"{_mod_path}.kfy",
+                    pathlib.Path(source_path).parent / "kofty_ui" / f"{_node.module}.kfy",
+                    pathlib.Path(source_path).parent.parent / f"{_mod_path}.kfy"
+                ]
+
+                _module_file = None
+                for _p in _possible_paths:
+                    if _p.exists():
+                        _module_file = _p
+                        break
+
+                # ... _possible_paths code we just added ...
+
+                if _module_file is None:
                     _remaining_body.append(_node)
                     continue
+
                 _module_source = _module_file.read_text(encoding="utf-8-sig")
                 _module_tree = ast.parse(_module_source)
-                _module_funcs = {}
+                _module_items = {}
                 for _item in _module_tree.body:
-                    if isinstance(_item, ast.FunctionDef):
-                        _module_funcs[_item.name] = _item
+                    if isinstance(_item, (ast.FunctionDef, ast.ClassDef)):
+                        _module_items[_item.name] = _item
                 for _alias in _node.names:
                     if _alias.name == "*":
                         raise TranspileError(
                             f"`from {_node.module} import *` is not supported."
                         )
-                    if _alias.name not in _module_funcs:
+                    if _alias.name not in _module_items:
                         raise TranspileError(
                             f"'{_alias.name}' is not defined in "
                             f"{_module_file.name}."
                         )
                     _imported_source_functions[_alias.name] = \
-                        _module_funcs[_alias.name]
+                        _module_items[_alias.name]
                 for _mnode in _module_tree.body:
                     if isinstance(_mnode, (ast.Import, ast.ImportFrom)):
-                        _remaining_body.append(_mnode)
+                        # Prepend the imports from the module so they are evaluated first
+                        tree.body.insert(0, _mnode)
                 continue
             _remaining_body.append(_node)
         tree.body = list(_imported_source_functions.values()) + _remaining_body
@@ -4967,6 +5088,21 @@ def transpile(source: str, source_path=None) -> str:
     # Pass 1: register user function names and class names so calls resolve.
     # Pass 1: register user function names, class names, and inheritance info.
     emitter = CppEmitter()
+    # --- FIX: Pre-register all C++ imports as external functions ---
+    for _n in tree.body:
+        if isinstance(_n, ast.ImportFrom):
+            if _n.module and _n.module.startswith("kofty_gui"):
+                for _a in _n.names:
+                    emitter.external_funcs.add(_a.asname or _a.name)
+    # -------------------------------------------------------------
+    # --- FIX: Pre-register all C++ imports as external functions ---
+    # so the transpiler doesn't throw "Unknown function" for things
+    # imported from kofty_gui.
+    for _n in tree.body:
+        if isinstance(_n, ast.ImportFrom):
+            for _a in _n.names:
+                emitter.external_funcs.add(_a.asname or _a.name)
+    # -------------------------------------------------------------
     # Batch 33: infer element types for empty list literals.
     # For each function body (and module scope), find `xs = []` assignments
     # and infer xs's element type from the first `xs.append(<expr>)` call.
@@ -5020,6 +5156,12 @@ def transpile(source: str, source_path=None) -> str:
         elif isinstance(node, ast.ClassDef):
             emitter.user_funcs.add(node.name)
             emitter.user_classes.add(node.name)
+
+            # If this class inherits from an imported base (like Widget),
+            # register the base as a valid class too so it isn't "not defined".
+            for base in node.bases:
+                if isinstance(base, ast.Name):
+                    emitter.user_classes.add(base.id)
 
             # Record all bases (single or multiple)
             base_names = []
@@ -5466,7 +5608,8 @@ def transpile(source: str, source_path=None) -> str:
         '#include <thread>',
         '#include <set>',
         '#include <set>',
-        *[f'#include "{_m}.hpp"' for _m in sorted(emitter.user_modules)],
+        *[f'#include "{_m}.hpp"' for _m in sorted(emitter.user_modules)
+          if not (_m.startswith("kofty_ui") or _m.startswith("kofty_gui."))],
         '',
         "// Helper: format a double cleanly — no trailing zeros, no trailing dot.",
         "// Used by InterScript `str()` for numeric values.",

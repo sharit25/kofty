@@ -4104,3 +4104,430 @@ Foundation is done. §77's roadmap is unblocked:
 Do NOT add `PollInputEvents()` anywhere in the event pipeline.
 Do NOT delete `g_gui` in `gui_close()` until raylib teardown is
 investigated further.
+
+## §79: AnchorLayout — 3x3 anchors with resize reflow (2026-10-20)
+
+**Feature:** A Panel-based container where children are positioned by
+one of 9 anchor slots (top-left, top-center, top-right, middle-left,
+middle-center, middle-right, bottom-left, bottom-center, bottom-right)
+plus an offset. Repositions automatically when the window is resized.
+
+### API
+
+    gui_add_anchorlayout(parent_id) -> id
+    gui_anchor_add(anchor_id, widget_id, anchor_side, offset_x, offset_y, width, height)
+
+`anchor_side` values: 0=TL, 1=TC, 2=TR, 3=ML, 4=MC, 5=MR, 6=BL, 7=BC, 8=BR.
+Offset is a pixel shift from the anchor corner (positive = right/down,
+negative = left/up for right/bottom anchors).
+
+### Design
+
+Two-phase:
+
+1. `gui_anchor_add` records `{anchor_id, widget_id, anchor_side,
+   offset_x, offset_y, width, height}` into `g_anchors` vector, then
+   calls `_kofty_apply_anchors()` once for the initial layout.
+
+2. `gui_update()` calls `_kofty_apply_anchors()` every frame, before
+   `gui->handleEvents()`. The function iterates `g_anchors`, reads
+   the panel's current size, and recomputes each widget's position
+   and size.
+
+**Why per-frame, not on-resize-event:** TGUI has no "parent resized"
+signal that fires before draw. Per-frame recompute is trivially cheap
+for tens of widgets and is how you get correct reflow without new
+plumbing.
+
+### Files changed
+
+- `kofty_gui/kofty_gui.hpp`:
+  - `AnchorEntry` struct + `g_anchors` vector in `kofty_gui_detail`
+  - `_kofty_apply_anchors()` — new function, called from `gui_update`
+  - `gui_add_anchorlayout()` — new function
+  - `gui_anchor_add()` — new function, records to `g_anchors`
+  - `gui_update()` — added `_kofty_apply_anchors()` call
+  - `gui_window()` — added `g_anchors.clear()` to init block
+- `examples/anchor_demo.kfy` — 6-widget demo (title, status, close,
+  center, quit, ok) covering all four corners + center
+
+### Verified
+
+- Initial layout: correct at all 9 anchor positions.
+- Resize wider: right-anchored widgets stay pinned; top-center status
+  re-centers; middle-center stays centered.
+- Resize narrower: left-anchored widgets stay pinned; overlapping
+  widgets in a too-narrow window is expected (see §79.1).
+- Resize taller/shorter: top/bottom anchors follow.
+- Clicks still work.
+- Close still instant.
+- No new diagnostic prints.
+
+### Known limitations
+
+1. **Overlap in narrow windows** — if two anchored widgets have fixed
+   widths that don't fit the window, they overlap. A future "wrap"
+   or "shrink-to-fit" layout would fix this. Not urgent.
+2. **No size-relative sizing** — widths and heights are pixels, not
+   percentages. `gui_anchor_add(..., 0.5f, 0.5f)` would be a
+   percentage-of-panel option. Deferred.
+3. **Anchors don't cascade** — a widget anchored inside an anchor
+   panel inside another anchor panel uses the innermost panel's size.
+   Fine for now; cascading is a much bigger feature.
+
+### Next
+
+§77's roadmap is unblocked further:
+- Image (5 min) — `tgui::Picture::create(path)` + a `gui_set_image`
+- Slider (10 min) — `tgui::Slider::create()` + a `gui_get_slider_value`
+- ToggleButton (10 min)
+- TextInput (10 min) — `tgui::EditBox` is already `#include`d
+- Canvas drawing — bigger, needs an overlay canvas approach
+- Animation — bigger
+
+## §80: Split-Mode Standard & UI Foundation (2026-10-20)
+
+### New Rules for all future batches
+1. **ALL examples must be written in split mode.**
+   - `foo.kfy` contains the Python logic, class, `gui_window()`, `gui_load_ui("foo_ui.kfy")`, and the loop.
+   - `foo_ui.kfy` contains the Kivy-style layout (`<MainApp>:` -> `<BoxLayout>:` -> widgets).
+2. **No raw C++ widget calls in `.kfy` files.** Everything goes through the Kivy parser (`kv_parser.py`).
+
+### Next Batch: Window Color & Basic Widgets
+Before adding new features (Image, Slider, etc.), we need to perfect the basics.
+**Goal:** A completely blank black window, then add Buttons and Labels using split-mode.
+
+**Step 1 — Black Background**
+- Add `gui_set_window_color(r, g, b)` to `kofty_gui.hpp`.
+- Currently `gui_update()` hardcodes `ClearBackground({240, 240, 240, 255});` (light gray). This must be changed to use a global color variable (e.g., `g_bg_color`) that `gui_set_window_color` updates.
+- The default window color should be **black** (`{0, 0, 0, 255}`).
+
+**Step 2 — Kivy Parser Update**
+- Update `kv_parser.py` to support `background_color: r, g, b` on the `<MainApp>` or root level, which generates `gui_set_window_color(r, g, b);`.
+- Update `kv_parser.py` to ensure `<BoxLayout>` and `<AnchorLayout>` are fully stable.
+
+**Step 3 — Split-Mode Example**
+- Create `examples/window_demo.kfy` and `examples/window_demo_ui.kfy`.
+- The UI should demonstrate a black window with a `BoxLayout` containing:
+  - A Label: `text: "Hello Kofty"`, `color: 255, 255, 255` (white text on black bg).
+  - A Button: `text: "Click Me"`, `color: 0, 255, 0`.
+
+**Next Session AI Instructions:**
+1. Read §77-80 to understand the GUI foundation.
+2. The window currently clears to `{240, 240, 240, 255}`. Fix `gui_update()` to use a global `g_window_bg` defaulting to black.
+3. Add `gui_set_window_color` to the header and `background_color` to `kv_parser.py`.
+4. Build `window_demo.kfy` and `window_demo_ui.kfy` in split mode.
+
+## §81: Window Background & Split-Mode Widgets DONE (2026-10-20)
+
+- `gui_set_window_color(r, g, b)` added to `kofty_gui.hpp`.
+- `gui_update()` now uses `kofty_gui_detail::g_window_bg` (defaults to black).
+- `kv_parser.py` now parses `background_color: r, g, b` and generates `gui_set_window_color(...)`.
+- `examples/window_demo.kfy` and `window_demo_ui.kfy` created (split-mode).
+- All future examples MUST use split-mode (`foo.kfy` + `foo_ui.kfy`).
+
+## §82: TextInput (EditBox) and Color Parsing DONE (2026-10-21)
+
+- Implemented `gui_add_textinput` and `gui_get_text` in `kofty_gui.hpp`.
+- Parser now maps `TextInput:` to `gui_add_textinput`.
+- Split-mode examples `textinput.kfy` / `textinput_ui.kfy` created.
+- Colors now support Kivy floats (`1, 0, 0`), RGB (`255, 0, 0`), Hex (`#ff0000`), and Alpha for both Text and Background.
+
+**Next Batch:**
+- Image support (`gui_add_image` via `tgui::Picture`).
+- Parser update for `Image:` widget with `source:` property.
+- Build split-mode `image_demo`.
+
+## §83: Kivy Class Structure & TextInput DONE (2026-10-21)
+
+### The New Kivy Class Standard
+All future examples MUST use the Kivy class structure:
+```python
+class MainWidget:
+    def __init__(self):
+        # widget state here
+        pass
+
+class TheLabApp:
+    def __init__(self):
+        self.main_widget = MainWidget()
+
+    def run(self):
+        gui_window(800, 600, "Title")
+        gui_load_ui("app_ui.kfy")
+        while gui_running():
+            # logic here
+            gui_update()
+        gui_close()
+
+app = TheLabApp()
+app.run()
+
+## §84: Object-Oriented Widgets & Inheritance (2026-10-21)
+
+### The Architecture Shift
+We realized that importing 13 C++ GUI functions into every `.kfy` file is ugly. We now use **Inheritance** in Kofty to wrap C++ functions into Python classes.
+
+1. `kofty_widgets.kfy` acts as our standard library. It imports the C++ functions once and provides `Widget`, `Button`, `Label`, `TextInput` classes.
+2. `Button`, `Label`, and `TextInput` all inherit from `Widget`. They all have `set_size()` and `set_pos()`.
+3. The main app now simply instantiates these classes (`self.button = Button(...)`) and calls methods (`.set_color()`).
+
+### Rule for Future Batches
+- Never import `gui_add_*` or `gui_set_*` directly into the main app file.
+- Add new widgets to `kofty_widgets.kfy`.
+- Use Python classes to build the UI.
+
+## §85: Project Structure & Library Organization (2026-10-21)
+
+We have reorganized the project to match Kivy's architecture.
+
+### The New Kofty GUI Structure
+- `C:\kofty-gui\kofty_gui\` is the framework core.
+- `C:\kofty-gui\kofty_gui\kofty_ui.kfy` contains the base classes (`Widget`, `Button`, `Label`, `TextInput`).
+- User projects should ONLY contain their `app.kfy` and `app_ui.kfy`.
+
+### Import Rule
+- Base classes are imported via: `from kofty_gui.kofty_ui import Widget, Button, Label, TextInput`
+- Do NOT put framework files inside the `examples/` folder.
+
+### Next Steps
+- Ensure the Kofty compiler correctly resolves `from kofty_gui.kofty_ui import ...` (it needs to search the installed package path, not just the local folder).
+
+## §86: The Kivy-Style Project Structure (2026-10-21)
+
+The project now has a framework library (`kofty_ui/`) completely separate from user examples.
+
+### Directory Structure
+- `C:\kofty-gui\kofty_gui\` -> The C++ Backend (`kofty_gui.hpp`)
+- `C:\kofty-gui\kofty_ui\` -> The Python UI Library (`widgets.kfy`)
+- `C:\kofty-gui\examples\` -> User apps only
+
+### The Library (`kofty_ui/widgets.kfy`)
+Contains the base classes `Widget`, `Button`, `Label`, and `TextInput`.
+User apps import these instead of the raw C++ functions:
+`from kofty_ui.widgets import Widget, Button, Label, TextInput, check_click`
+
+### The Kivy Class Pattern
+```python
+class MainWidget(Widget):
+    def __init__(self):
+        Widget.__init__(self)
+        self.btn = Button("Click", -1)
+        self.btn.set_size(100, 50)
+
+class TheLabApp:
+    def __init__(self):
+        self.main_widget = MainWidget()
+    def run(self):
+        gui_window(...)
+        gui_load_ui(...)
+        while gui_running():
+            gui_update()
+
+app = TheLabApp()
+app.run()
+
+## §81: Window Background & Split-Mode Widgets DONE (2026-10-20)
+
+- `gui_set_window_color(r, g, b)` added to `kofty_gui.hpp`.
+- `gui_update()` now uses `kofty_gui_detail::g_window_bg` (defaults to black).
+- `kv_parser.py` now parses `background_color: r, g, b` and generates `gui_set_window_color(...)`.
+- `examples/window_demo.kfy` and `window_demo_ui.kfy` created (split-mode).
+- All future examples MUST use split-mode (`foo.kfy` + `foo_ui.kfy`).
+
+## §82: TextInput (EditBox) and Color Parsing DONE (2026-10-21)
+
+- Implemented `gui_add_textinput` and `gui_get_text` in `kofty_gui.hpp`.
+- Parser now maps `TextInput:` to `gui_add_textinput`.
+- Split-mode examples `textinput.kfy` / `textinput_ui.kfy` created.
+- Colors now support Kivy floats (`1, 0, 0`), RGB (`255, 0, 0`), Hex (`#ff0000`), and Alpha for both Text and Background.
+
+**Next Batch:**
+- Image support (`gui_add_image` via `tgui::Picture`).
+- Parser update for `Image:` widget with `source:` property.
+- Build split-mode `image_demo`.
+
+## §83: Kivy Class Structure & TextInput DONE (2026-10-21)
+
+### The New Kivy Class Standard
+All future examples MUST use the Kivy class structure:
+```python
+class MainWidget:
+    def __init__(self):
+        # widget state here
+        pass
+
+class TheLabApp:
+    def __init__(self):
+        self.main_widget = MainWidget()
+
+    def run(self):
+        gui_window(800, 600, "Title")
+        gui_load_ui("app_ui.kfy")
+        while gui_running():
+            # logic here
+            gui_update()
+        gui_close()
+
+app = TheLabApp()
+app.run()
+
+## §84: Object-Oriented Widgets & Inheritance (2026-10-21)
+
+### The Architecture Shift
+We realized that importing 13 C++ GUI functions into every `.kfy` file is ugly. We now use **Inheritance** in Kofty to wrap C++ functions into Python classes.
+
+1. `kofty_widgets.kfy` acts as our standard library. It imports the C++ functions once and provides `Widget`, `Button`, `Label`, `TextInput` classes.
+2. `Button`, `Label`, and `TextInput` all inherit from `Widget`. They all have `set_size()` and `set_pos()`.
+3. The main app now simply instantiates these classes (`self.button = Button(...)`) and calls methods (`.set_color()`).
+
+### Rule for Future Batches
+- Never import `gui_add_*` or `gui_set_*` directly into the main app file.
+- Add new widgets to `kofty_widgets.kfy`.
+- Use Python classes to build the UI.
+
+## §85: Project Structure & Library Organization (2026-10-21)
+
+We have reorganized the project to match Kivy's architecture.
+
+### The New Kofty GUI Structure
+- `C:\kofty-gui\kofty_gui\` is the framework core.
+- `C:\kofty-gui\kofty_gui\kofty_ui.kfy` contains the base classes (`Widget`, `Button`, `Label`, `TextInput`).
+- User projects should ONLY contain their `app.kfy` and `app_ui.kfy`.
+
+### Import Rule
+- Base classes are imported via: `from kofty_gui.kofty_ui import Widget, Button, Label, TextInput`
+- Do NOT put framework files inside the `examples/` folder.
+
+### Next Steps
+- Ensure the Kofty compiler correctly resolves `from kofty_gui.kofty_ui import ...` (it needs to search the installed package path, not just the local folder).
+
+## §86: The Kivy-Style Project Structure (2026-10-21)
+
+The project now has a framework library (`kofty_ui/`) completely separate from user examples.
+
+### Directory Structure
+- `C:\kofty-gui\kofty_gui\` -> The C++ Backend (`kofty_gui.hpp`)
+- `C:\kofty-gui\kofty_ui\` -> The Python UI Library (`widgets.kfy`)
+- `C:\kofty-gui\examples\` -> User apps only
+
+### The Library (`kofty_ui/widgets.kfy`)
+Contains the base classes `Widget`, `Button`, `Label`, and `TextInput`.
+User apps import these instead of the raw C++ functions:
+`from kofty_ui.widgets import Widget, Button, Label, TextInput, check_click`
+
+### The Kivy Class Pattern
+```python
+class MainWidget(Widget):
+    def __init__(self):
+        Widget.__init__(self)
+        self.btn = Button("Click", -1)
+        self.btn.set_size(100, 50)
+
+class TheLabApp:
+    def __init__(self):
+        self.main_widget = MainWidget()
+    def run(self):
+        gui_window(...)
+        gui_load_ui(...)
+        while gui_running():
+            gui_update()
+
+app = TheLabApp()
+app.run()
+
+## §87: Multi-file Class Imports (2026-10-21)
+
+We updated `kofty/transpiler.py` so that `from module import ClassName` works across local files!
+
+- The transpiler now searches `candidates = ["module.kfy", "module.py", "module/dir.kfy"]`.
+- It searches the current dir, parent dir, and package root.
+- It recursively inlines `ClassDef` and `FunctionDef` nodes from the external module into the main AST before Pass 1.
+- The Kofty UI library is now located at `C:\kofty-gui\kofty_ui\widgets.kfy`.
+- Main apps simply do: `from kofty_ui.widgets import Widget, Button, Label, TextInput`
+- `examples/textinput.kfy` is now a 20-line Kivy-style app.
+
+## §88: Reverting External File Inheritance (2026-10-21)
+
+**Status:** The GUI now compiles and runs perfectly using the "single-file widget definitions" architecture. We abandoned the attempt to use external `widgets.py` files because the core C++ transpiler cannot handle multi-file class inheritance (`class Label(Widget)`) without crashing with `cannot convert Label to int`.
+
+**What we kept:**
+- `kofty_gui.hpp` (window bg colors, bottom-left coords, grey buttons, text/bg setters).
+- `kv_parser.py` (parses `<MainWidget>:`, `background_color`, `size`, `pos`).
+- `textinput.kfy` with local class definitions (`class Label:`, `class Button:`).
+
+**What we deleted:**
+- `gui_transpiler.py` (no longer needed, core transpiler handles imports).
+- `widgets.py` (classes are now local to `textinput.kfy`).
+
+**Rule for future batches:**
+Never define `class Label(Widget)` across multiple files. Always define the widget classes directly at the top of your `.kfy` file, or use the single-file architecture.
+
+## §89: TRUE Split-Mode C++ Architecture (2026-10-21)
+
+**Status:** Compiling and running perfectly!
+
+We finally achieved true split-mode architecture that matches Kivy:
+
+1. `kofty_gui/widgets.hpp` — The C++ library of structs (Label, TextInput, Button).
+2. `examples/textinput.kfy` — The app logic (holds the UI).
+3. `examples/textinput_ui.kfy` — The layout file (`<MainWidget>: background_color: ...`).
+
+### The Golden Rules (Do not break these)
+- **DO NOT** define `class Label:` inside `.kfy` files. They live in `widgets.hpp`.
+- **DO NOT** use `class MainWidget(widgets):`. `widgets` is a module, not a class. Use `class MainWidget:`.
+- **DO NOT** import C++ functions like `gui_add_label` into `.kfy` files unless necessary. `widgets.hpp` handles them.
+- **Always** put `#include "kofty_gui.hpp"` in `widgets.hpp`.
+- The transpiler (`transpiler.py`) has a special rule: `if node.name in ("Label", "TextInput", "Button", "Widget"): return` to prevent duplicate struct generation.
+
+### Next Steps:
+- Add `Slider`, `Image`, `CheckBox` to `widgets.hpp` and `textinput.kfy`.
+- Create a `kofty_widgets` pip package so users can do `pip install kofty-widgets`.
+
+## §90: Full Kivy Inheritance & Split-Mode Working (2026-10-21)
+
+**Status:** Fully working! We successfully compiled `class MainWidget(Widget):` using `gui_load_ui()` and a C++ `widgets.hpp` library.
+
+### The Working Architecture
+1. `widgets.hpp`: Contains the C++ structs (`Widget`, `Label`, `Button`). DO NOT redefine them in `.kfy`.
+2. `textinput.kfy`: The app logic. Inherits from `Widget` and runs `gui_load_ui("textinput_ui.kfy")`.
+3. `textinput_ui.kfy`: The Kivy layout. Contains `<MainWidget>:`, `background_color`, and widget definitions (`Button:`, `Label:`).
+
+### Rule for `.kfy` Files
+```python
+from widgets import Widget, Button, Label
+
+class MainWidget(Widget):
+    def __init__(self):
+        pass # No super().__init__() needed right now
+
+app = MainWidget()
+gui_window(800, 600, "My App")
+gui_load_ui("ui.kfy")
+while gui_running():
+    gui_update()
+gui_close()
+
+## §91: Kivy-Style AnchorLayout Working (2026-10-22)
+
+**Status:** Milestone achieved. Window opens, black background, widget rendering works.
+
+### The Working Architecture
+1. **`widgets.hpp`** (in `examples/`): Contains `Widget`, `Button`, `Label`, `TextInput`, and layout structs. NO PLURAL `Widgets`. NO `super().__init__()` calls in `.kfy` classes.
+2. **`textinput_ui.kfy`**: The Kivy layout file.
+   ```kivy
+   <MainWidget>:
+       background_color: 0, 0, 0
+       <AnchorLayout>:
+           Button:
+               text: "A"
+               size: 200, 50
+               anchor: "top-left"
+           Button:
+               text: "B"
+               size: 200, 50
+               anchor: "center"
+           Label:
+               text: "C"
+               size: 200, 50
+               anchor: "bottom-right"
